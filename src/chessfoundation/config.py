@@ -23,8 +23,8 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "p6m": Preset("p6m", d_model=320, n_layers=8, n_heads=8),
-    "p20m": Preset("p20m", d_model=512, n_layers=12, n_heads=8),
+    "p6m": Preset("p6m", d_model=296, n_layers=8, n_heads=8),
+    "p20m": Preset("p20m", d_model=480, n_layers=12, n_heads=8),
 }
 
 
