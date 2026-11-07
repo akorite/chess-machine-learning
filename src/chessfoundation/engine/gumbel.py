@@ -24,6 +24,7 @@ class SearchConfig:
     max_considered: int = 16
     c_visit: float = 50.0
     bf16: bool = False
+    mode: str = "gumbel"  # "gumbel" or "puct" fallback for the A/B gate
 
 
 DEFAULT_SEARCH = SearchConfig()
@@ -125,7 +126,11 @@ def search(
         return SearchResult(_best_move(root, legal), 1)
 
     considered = sorted(root.legal, key=lambda i: root.prior[i], reverse=True)[: cfg.max_considered]
-    gumbel = {i: -np.log(-np.log(rng.random() + 1e-12) + 1e-12) for i in considered}
+    gumbel = (
+        {i: -np.log(-np.log(rng.random() + 1e-12) + 1e-12) for i in considered}
+        if cfg.mode == "gumbel"
+        else {}
+    )
     evaluated = 1
     while evaluated < budget:
         node = root
@@ -137,7 +142,7 @@ def search(
             if node is not root and node.visits == 0:
                 value = _expand(model, node, device)
                 break
-            index = _select_root(root, gumbel, cfg.c_visit) if node is root else _select(node, cfg.c_visit)
+            index = _select_root(root, gumbel, cfg) if node is root else _select(node, cfg.c_visit)
             child = node.children.get(index)
             if child is None:
                 child_board = node.board.copy(stack=False)
@@ -156,16 +161,18 @@ def search(
         root.visits += 1
         evaluated += 1
 
-    return SearchResult(_best_move(root, legal, gumbel, cfg.c_visit), evaluated)
+    return SearchResult(_best_move(root, legal, gumbel or None, cfg.c_visit, cfg.mode), evaluated)
 
 
-def _select_root(root: _Node, gumbel: dict[int, float], c_visit: float) -> int:
+def _select_root(root: _Node, gumbel: dict[int, float], cfg: SearchConfig) -> int:
     best_index, best_score = root.legal[0], -np.inf
     for index in root.legal:
-        if index not in gumbel:
+        if cfg.mode == "gumbel" and index not in gumbel:
             continue
         child = root.children.get(index)
-        score = root.prior[index] + gumbel[index] + (c_visit * child.mean if child is not None else 0.0)
+        score = root.prior[index] + gumbel.get(index, 0.0) + (
+            cfg.c_visit * child.mean if child is not None else 0.0
+        )
         if score > best_score:
             best_index, best_score = index, score
     return best_index
@@ -199,13 +206,14 @@ def _best_move(
     legal: list[chess.Move],
     gumbel: dict[int, float] | None = None,
     c_visit: float = 0.0,
+    mode: str = "gumbel",
 ) -> chess.Move:
     def score(move: chess.Move) -> float:
         index = move_index(move)
-        base = root.prior[index]
-        if gumbel is not None and index in gumbel:
-            base += gumbel[index]
         child = root.children.get(index)
+        if mode == "puct":
+            return float(child.visits) if child is not None else 0.0
+        base = root.prior[index] + (gumbel[index] if gumbel and index in gumbel else 0.0)
         return base + (c_visit * child.mean if child is not None else 0.0)
 
     best = max(legal, key=score)

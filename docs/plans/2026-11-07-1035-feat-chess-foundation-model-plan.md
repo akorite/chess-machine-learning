@@ -18,6 +18,15 @@ execution: code
 - **Stop conditions:** the 150 CU ceiling is reached; a strength gate fails twice after a documented fix; or L3 is proven unreachable, in which case the highest rung beaten is recorded and the run stops.
 - **Finishes the work:** `ce-work` executes the units; the user owns the Colab account and accepts the final rung.
 
+## Execution Status (resumed 2026-11-07, pipeline run)
+
+- **Done:** U1–U11 code landed and committed; 130 tests pass locally; lint clean. Colab session `bench` (L4) uploaded the package and ran the throughput benchmark.
+- **Measured on L4** (`/content/bench.json`, torch 2.14.1+cu130): P6M 4460 pos/s, 12.9ms batch-1; P20M 2089 pos/s, 35.6ms batch-1; training 614 pos/s. P20M batch-1 is above the R3 ≤10ms policy-only target — see Deferred / Open Questions for the unresolved R3 binding decision. The 400ms budget is met via simulation count, not single-eval latency (Assumption on sim counts already anticipates shipping the attainable count).
+- **Remaining (execution, not planning):** provision Stockfish/lc0/BT5 + fastchess (or python-chess runner) on Colab; build caches (U2 commands); pretraining stages A→C (U6); QAT/INT8 export verify (U7); engine verification (U8); on-policy rounds (U10); ladder + non-Stockfish match + report (U11); CU accounting against the 110/150 band.
+- **Match preset rule:** the match preset is the largest preset whose measured INT8 batch-1 latency still fits the 32-simulation floor inside 400ms per move; current expectation is P6M, re-evaluated after U7 export. Training stages run at that preset; the other preset is measured and reported, not trained through the full pipeline.
+- **New settled decision:** GPU/match execution runs on Colab via the `colab` CLI with session `bench` (session-settled: user-directed — chosen over local-CPU execution or other clouds: the budget contract is denominated in Colab CU and a live L4 assignment already exists). Governs remaining execution of U5–U11 verification.
+
+
 ---
 
 ## Product Contract
@@ -146,7 +155,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  P[Via P5M/P6M recipe check] --> Q[P20M pretrain]
+  P[Via P6M recipe check] --> Q[P20M pretrain]
   Q --> R[Deep-label fine-tune]
   R --> S[On-policy round 1]
   S --> T[On-policy round 2]
@@ -179,7 +188,7 @@ flowchart TB
 |---|---|
 | Deep Lichess rows are sparse | U2 counts depth ≥24 rows first; fall back to re-labeling a sampled subset with Stockfish at depth 22–24 |
 | BT5 labeling is slower than estimated | Label 50k positions per round at 64 sims; the projection gate refuses a round that does not fit its CU line |
-| INT8 QAT loses accuracy | QAT from the first fine-tune stage, not post-hoc; export verification against FP16 on 5k positions |
+| INT8 QAT loses accuracy | QAT folded into the fine-tune stage, not applied post-hoc to a frozen checkpoint; export verification against FP16 on 5k positions |
 | Hybrid student underperforms pure transformer | U4 ablates both heads-on at 6M before the main run |
 | Gumbel does not beat PUCT at the measured budget | A/B gate; PUCT remains the fallback and the report states which shipped |
 | Search cannot fit 400ms | Adaptive simulation count with a floor; ship at the attainable count and report it |
@@ -347,6 +356,7 @@ flowchart TB
   - Policy-only fallback: one forward, legal argmax, hard cap.
   - Gumbel MCTS with sequential halving and batched leaf evaluation; simulations derived from measured throughput, remaining clock, and value-head entropy; floor of 32 simulations inside 400ms.
   - Time manager: average 400ms per move at 1+0, `MoveOverhead` 20–50ms, reserve for the endgame.
+  - PUCT selection mode (`--search puct`, sharing the same tree machinery) so the Risks-table A/B gate and documented fallback are runnable; Gumbel remains the default.
   - Polyglot book probe capped at 12 plies; Syzygy probe when piece count ≤5; `SyzygyFastPlay` configurable.
 - **Test scenarios:**
   - Handshake and `go` return legal moves for start and promotion positions.
@@ -405,7 +415,7 @@ flowchart TB
 - **Dependencies:** U3, U8, U10
 - **Files:** `src/chessfoundation/eval/report.py`, `docs/results/README.md`, `tests/test_report.py`
 - **Approach:**
-  - Ladder data: L2 (`UCI_Elo 2000`), L3 (`2400`), L4 (10k nodes), full strength; climb on the interval rule.
+  - Ladder data: L2 (`UCI_Elo 2000`), L3 (`2400`), N10k (10k nodes/move), full strength; climb on the interval rule.
   - 400-game primary match at 1+0 with the book; policy-only and searched variants both measured on the final rung; SFT vs post-RL delta reported.
   - Opponent set: pinned Stockfish rungs plus one alpha-beta engine for R10.
   - Report records binaries, options, book, tablebase path, achieved simulations, intervals, puzzle accuracy, and latency.
@@ -429,7 +439,7 @@ flowchart TB
 | Throughput gate | `uv run python -m chessfoundation.train.throughput --preset p20m --accelerator L4` | projected run ≤ phase allocation; latency recorded |
 | Pretrain gate | `uv run python -m chessfoundation.train.gates --checkpoint <path>` | value MAE and PV accuracy improve per stage |
 | Quantization | `uv run python -m chessfoundation.quant.verify --checkpoint <path>` | ≥99% move agreement; latency lower |
-| Engine | `uv run python -m chessfoundation.engine.time --preset p20m` | policy-only ≤10ms; ≥32 sims in 400ms |
+| Engine | `uv run python -m chessfoundation.engine.time --preset p6m` | policy-only latency recorded vs R3 bound; ≥32 sims in 400ms |
 | Match | `uv run python -m chessfoundation.eval.ladder --config <ladder>` | score interval excludes 50% at the claimed rung |
 | Budget | `colab usage` before and after each GPU run | cumulative ≤150 CU, per-phase respected, target band 110–150 reported |
 
@@ -442,6 +452,17 @@ flowchart TB
 - Total Colab spend stays within the 110–150 CU band and respects the per-phase allocation; the report states actual spend against the 110 target.
 - Failed experiments and scratch notebooks are deleted.
 - The report states the achieved rung, the pinned configuration, the achieved simulations, and the gap to the next rung; a sub-L2 result is reported as a negative result.
+
+
+---
+
+## Deferred / Open Questions
+
+From 2026-11-07 doc review:
+
+- **R3 binding (product decision):** R3's ≤10ms policy-only bound does not name which artifact (FP16 PyTorch vs INT8 export) or preset it applies to. Measured FP16 batch-1 latency is 35.6ms (P20M) and 12.9ms (P6M) — both above the bound as literally written. Execution proceeds per the match-preset rule and records attained latency; whether R3 binds the INT8 export or is re-baselined to measured FP16 remains the user's call.
+- **R10 opponent:** which non-Stockfish open-source engine plays the R10 match is unrecorded (U11 says "one alpha-beta engine"). Execution default: Maia-3 5M, already the U3 calibration reference, unless a stronger alpha-beta binary is available on Colab.
+
 
 ---
 
@@ -458,5 +479,5 @@ flowchart TB
 | Pretraining data | GigaFish 3.9B (d10), ChessBench state values; Lichess games for self-supervision |
 | Policy/PV data | Lc0 v6 chunks; Lichess eval `line` field |
 | Endgame | Syzygy 3–4–5 piece (~939MB) |
-| Match protocol | 400 games, 1+0, fixed book, 95% intervals; policy-only ladder on local CPU, search A/B on L4 |
+| Match protocol | 400 games, 1+0, fixed book, 95% intervals; policy-only ladder and search A/B on Colab L4 |
 | Published anchors | Efficient self-play 6.32M: 2,823 @ 1k sims, 3,251 @ 100k; Chessformer 191M policy 2,374; Gigafish hybrid 79M beats pure ViT at 40–80M |

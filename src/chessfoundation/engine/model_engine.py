@@ -30,6 +30,7 @@ class ModelEngine:
         time_config: TimeConfig = DEFAULT_TIME,
         bf16: bool = False,
         compile_model: bool = False,
+        search_mode: str = "gumbel",
     ):
         if compile_model and torch.cuda.is_available():
             model = torch.compile(model)
@@ -39,6 +40,7 @@ class ModelEngine:
         self.syzygy_path = syzygy_path
         self.rng = rng or random.Random()
         self.time_config = time_config
+        self.search_mode = search_mode
         self.bf16 = bf16
         self.model._bf16 = bf16
         self.tablebase = None
@@ -61,7 +63,11 @@ class ModelEngine:
         budget = allocate(time_ms, ply, self.time_config)
         # shortcut: one simulation per millisecond until throughput is measured per accelerator
         simulations = max(1, min(self.simulations, int(budget)))
-        return search(self.model, board, SearchConfig(simulations=simulations, bf16=self.bf16))
+        return search(
+            self.model,
+            board,
+            SearchConfig(simulations=simulations, bf16=self.bf16, mode=self.search_mode),
+        )
 
     def _setoption(self, parts: list[str]) -> None:
         try:
@@ -82,6 +88,7 @@ class ModelEngine:
             if command == "uci":
                 stdout.write("id name chessfoundation\nid author chessfoundation\n")
                 stdout.write("option name Simulations type spin default 512 min 1 max 100000\n")
+                stdout.write("option name SearchMode type combo default gumbel var gumbel var puct\n")
                 stdout.write("uciok\n")
             elif command == "isready":
                 stdout.write("readyok\n")
@@ -149,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--compile", action="store_true")
+    parser.add_argument("--search", default="gumbel", choices=["gumbel", "puct"])
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)
@@ -159,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     model.to(args.device)
     engine = ModelEngine(
         model, args.simulations, args.book, args.syzygy,
-        bf16=args.bf16, compile_model=args.compile,
+        bf16=args.bf16, compile_model=args.compile, search_mode=args.search,
     )
     engine.run_uci()
     return 0

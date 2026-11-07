@@ -150,6 +150,26 @@ def test_search_spends_more_than_the_candidate_cap():
     result = search(tiny_model(), chess.Board(), SearchConfig(simulations=40), np.random.default_rng(1))
     assert result.simulations > 16
 
+def test_puct_search_selects_scripted_policy_move():
+    # PUCT mode must pick the move the policy points at without gumbel noise.
+    move = chess.Move.from_uci("e2e4")
+    result = search(
+        ScriptedModel(move),
+        chess.Board(),
+        SearchConfig(simulations=8, mode="puct"),
+        np.random.default_rng(3),
+    )
+    assert result.move == move
+
+
+def test_puct_search_deterministic_across_seeds():
+    model = tiny_model()
+    board = chess.Board()
+    cfg = SearchConfig(simulations=8, mode="puct")
+    first = search(model, board, cfg, np.random.default_rng(4)).move
+    second = search(model, board, cfg, np.random.default_rng(9)).move
+    assert first == second
+
 
 class EntropyModel(ScriptedModel):
     def __init__(self, move, uncertain):
