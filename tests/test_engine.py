@@ -162,6 +162,13 @@ def test_puct_search_selects_scripted_policy_move():
     assert result.move == move
 
 
+def test_search_handles_terminal_children():
+    # mate-in-1: Qh5xf7#; one child ends the game — regression for _terminal_value(_Node).
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1")
+    result = search(tiny_model(), board, SearchConfig(simulations=32), np.random.default_rng(4))
+    assert result.move in board.legal_moves
+
+
 def test_puct_search_deterministic_across_seeds():
     model = tiny_model()
     board = chess.Board()

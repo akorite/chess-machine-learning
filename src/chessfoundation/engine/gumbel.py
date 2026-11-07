@@ -137,7 +137,7 @@ def search(
         path: list[_Node] = []
         while True:
             if node.board.is_game_over():
-                value = _terminal_value(node)
+                value = _terminal_value(node.board)
                 break
             if node is not root and node.visits == 0:
                 value = _expand(model, node, device)
