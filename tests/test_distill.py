@@ -113,8 +113,8 @@ def test_play_and_collect_records_only_reached_positions():
     import sys
     from pathlib import Path
 
-    from chessfoundation.engine.uci import EngineSpec
     from chessfoundation.distill.rounds import play_and_collect
+    from chessfoundation.engine.uci import EngineSpec
 
     stub = [sys.executable, str(Path(__file__).with_name("stub_engine.py"))]
     white, black = EngineSpec(stub).open(), EngineSpec(stub).open()
