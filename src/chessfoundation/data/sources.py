@@ -35,6 +35,10 @@ def iter_rows(
     for shard in resolve_shards(source, limit_shards):
         parquet = pq.ParquetFile(shard)
         available = set(parquet.schema_arrow.names)
-        wanted = None if columns is None else [c for c in columns if c in available]
+        if columns is not None:
+            missing = sorted(set(columns) - available)
+            if missing:
+                raise ValueError(f"{shard} is missing columns {missing}")
+        wanted = columns
         for batch in parquet.iter_batches(batch_size=2048, columns=wanted):
             yield from batch.to_pylist()

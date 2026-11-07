@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import random
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import chess
@@ -14,17 +13,9 @@ import numpy as np
 from ..config import TrainConfig
 from ..data.cache import write_manifest, write_shard
 from ..data.encode import move_index, promo_index, record_from_board
+from ..teacher.avi import wdl_from_value
 from ..train import loop
 from .replay import ConcatDataset
-
-
-@dataclass(frozen=True)
-class RoundConfig:
-    games: int = 100
-    movetime_ms: int = 20
-    max_plies: int = 200
-    train_steps: int = 1000
-    replay_dirs: tuple[str, ...] = ()
 
 
 def play_and_collect(
@@ -56,8 +47,6 @@ def play_and_collect(
 
 
 def label_record(board: chess.Board, value: float, policy: dict[chess.Move, float]) -> np.ndarray:
-    from ..teacher.avi import wdl_from_value
-
     record = record_from_board(board)
     record["wdl"] = wdl_from_value(value)
     if policy:

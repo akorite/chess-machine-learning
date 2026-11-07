@@ -7,9 +7,6 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
-POLICY_ACTIONS = 64 * 64
-PROMO_ACTIONS = 4
-
 
 @dataclass(frozen=True)
 class Preset:

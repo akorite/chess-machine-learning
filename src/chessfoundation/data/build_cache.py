@@ -64,14 +64,16 @@ def chessbench_records(
 
 def puzzle_records(path: str, min_rating: int = 1200, max_rating: int = 2200) -> Iterator[np.ndarray]:
     for puzzle in puzzles.iter_puzzles(path, min_rating, max_rating):
+        if len(puzzle.moves) < 2:
+            continue
         try:
             board = chess.Board(puzzle.fen)
-            for token in puzzle.moves:
-                board.push_uci(token)
+            board.push_uci(puzzle.moves[0])
+            solution = board.parse_uci(puzzle.moves[1])
         except (ValueError, chess.InvalidMoveError):
             continue
         record = record_from_board(board)
-        record["policy"][0] = move_index(board.parse_uci(puzzle.moves[-1]))
+        record["policy"][0] = move_index(solution)
         record["policy_prob"][0] = 65535
         yield record
 
@@ -112,8 +114,10 @@ def build(
     flush()
     if total == 0:
         raise ValueError("no records produced")
+    counts = dict(counts or {})
+    counts["records"] = total
     result = {"records": total, "shards": shard_index}
-    write_manifest(out, counts or {})
+    write_manifest(out, counts)
     return result
 
 

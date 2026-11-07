@@ -107,3 +107,21 @@ def test_run_round_writes_shard_and_trains(tmp_path):
 def test_run_round_refuses_empty_positions(tmp_path):
     with pytest.raises(ValueError, match="no positions"):
         run_round(tiny_model(), [], lambda b: (0.0, {}), TrainConfig(), tmp_path / "r")
+
+
+def test_play_and_collect_records_only_reached_positions():
+    import sys
+    from pathlib import Path
+
+    from chessfoundation.engine.uci import EngineSpec
+    from chessfoundation.distill.rounds import play_and_collect
+
+    stub = [sys.executable, str(Path(__file__).with_name("stub_engine.py"))]
+    white, black = EngineSpec(stub).open(), EngineSpec(stub).open()
+    try:
+        positions = play_and_collect(white, black, games=1, movetime_ms=2, max_plies=6)
+    finally:
+        white.quit()
+        black.quit()
+    assert 0 < len(positions) <= 6
+    assert all(p.fen() for p in positions)

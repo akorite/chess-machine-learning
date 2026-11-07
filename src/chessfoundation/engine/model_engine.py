@@ -51,6 +51,7 @@ class ModelEngine:
         if probing is not None:
             return SearchResult(probing, 0)
         budget = allocate(time_ms, ply, self.time_config)
+        # shortcut: one simulation per millisecond until throughput is measured per accelerator
         simulations = max(1, min(self.simulations, int(budget)))
         return search(self.model, board, SearchConfig(simulations=simulations))
 

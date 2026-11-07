@@ -49,6 +49,10 @@ def build_tensorrt(onnx_path: str | Path, engine_path: str | Path) -> Path:
     parser = trt.OnnxParser(network, logger)
     if not parser.parse(Path(onnx_path).read_bytes()):
         raise RuntimeError(f"TensorRT failed to parse {onnx_path}")
-    engine = builder.build_serialized_network(network, builder.create_builder_config())
+    # shortcut: builds FP16/FP32; INT8 needs a calibrator or Q/DQ nodes in the graph
+    config = builder.create_builder_config()
+    if hasattr(trt, "BuilderFlag"):
+        config.set_flag(trt.BuilderFlag.FP16)
+    engine = builder.build_serialized_network(network, config)
     Path(engine_path).write_bytes(engine)
     return Path(engine_path)

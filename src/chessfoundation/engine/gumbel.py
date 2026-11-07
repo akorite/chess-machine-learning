@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from ..data.encode import board_planes, index_to_move, legal_masks, move_index
+from ..data.encode import board_planes, legal_masks, move_index
 
 
 @dataclass(frozen=True)
@@ -95,11 +95,3 @@ def search(
         final = scores + gumbel + cfg.c_scale * np.array([q.get(i, 0.0) for i in range(len(legal))])
         considered = sorted(considered, key=lambda i: final[i], reverse=True)[: max(1, len(considered) // 2)]
     return SearchResult(legal[considered[0]], evaluated)
-
-
-def move_from_index(index: int, legal: list[chess.Move]) -> chess.Move:
-    from_square, to_square = index_to_move(index)
-    for move in legal:
-        if move.from_square == from_square and move.to_square == to_square:
-            return move
-    raise ValueError(f"index {index} is not legal")
