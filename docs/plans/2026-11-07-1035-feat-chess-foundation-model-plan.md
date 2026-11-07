@@ -462,6 +462,7 @@ From 2026-11-07 doc review:
 
 - **R3 binding (product decision):** R3's ≤10ms policy-only bound does not name which artifact (FP16 PyTorch vs INT8 export) or preset it applies to. Measured FP16 batch-1 latency is 35.6ms (P20M) and 12.9ms (P6M) — both above the bound as literally written. Execution proceeds per the match-preset rule and records attained latency; whether R3 binds the INT8 export or is re-baselined to measured FP16 remains the user's call.
 - **R10 opponent:** which non-Stockfish open-source engine plays the R10 match is unrecorded (U11 says "one alpha-beta engine"). Execution default: Maia-3 5M, already the U3 calibration reference, unless a stronger alpha-beta binary is available on Colab.
+- **Teacher weights (execution substitution):** the plan names BT5-1024x15x32h-rpe as the lc0 teacher; the lczero `networks-contrib/big-transformers/` index carries no BT5 file — `BT4-1024x15x32h-swa-6315000.pb.gz` (same 1024x15x32 family, latest SWA) is the teacher in use. Report names the actual file; if BT5 appears later it is a drop-in swap.
 
 
 ---
@@ -474,7 +475,7 @@ From 2026-11-07 doc review:
 | L4 / A100 / G4 rate | 1.94 / 8.67 / 10.05 CU per hour |
 | Plan allocation | 110 CU target, 150 CU ceiling (data 8, throughput 4, pretrain 45, teacher labeling 12, distillation rounds 10, QAT/export 4, match/search A/B 8, contingency 8 = 99 committed; headroom 51) |
 | Student presets | P6M (d=256, 8 blocks), P20M (d=384, 12 blocks), hybrid stem |
-| Teacher | Lc0 BT5 at 64 sims; Stockfish depth 22–24 |
+| Teacher | Lc0 BT4 (`BT4-1024x15x32h-swa-6315000.pb.gz`, latest SWA — BT5 absent from the contrib index) at 64 sims; Stockfish depth 22–24 |
 | Deep-label filter | `depth ≥ 24` or `knodes ≥ 100k` |
 | Pretraining data | GigaFish 3.9B (d10), ChessBench state values; Lichess games for self-supervision |
 | Policy/PV data | Lc0 v6 chunks; Lichess eval `line` field |
