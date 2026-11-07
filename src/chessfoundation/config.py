@@ -19,8 +19,8 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "p6m": Preset(d_model=296, n_layers=8, n_heads=8),
-    "p20m": Preset(d_model=480, n_layers=12, n_heads=8),
+    "p6m": Preset(d_model=312, n_layers=8, n_heads=8),
+    "p20m": Preset(d_model=488, n_layers=12, n_heads=8),
 }
 
 
@@ -46,6 +46,7 @@ class TrainConfig:
     weight_decay: float = 0.01
     grad_clip: float = 1.0
     qat: bool = False
+    compile: bool = False
     seed: int = 0
 
 

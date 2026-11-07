@@ -23,6 +23,7 @@ class SearchConfig:
     simulations: int = 512
     max_considered: int = 16
     c_visit: float = 50.0
+    bf16: bool = False
 
 
 DEFAULT_SEARCH = SearchConfig()
@@ -52,11 +53,11 @@ class _Node:
         return self.value_sum / self.visits if self.visits else 0.0
 
 
-def _evaluate(model: nn.Module, boards: list[chess.Board], device: str):
+def _evaluate(model: nn.Module, boards: list[chess.Board], device: str, bf16: bool = False):
     planes = torch.from_numpy(
         np.stack([board_planes(board) for board in boards]).astype(np.float32)
     ).to(device)
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16 and device == "cuda"):
         outputs = model(planes)
     masks = np.stack([legal_masks(board)[0] for board in boards])
     logits = outputs["policy"].detach().cpu().numpy().astype(np.float64)
@@ -76,7 +77,7 @@ def _terminal_value(board: chess.Board) -> float:
 
 
 def _expand(model: nn.Module, node: _Node, device: str) -> float:
-    logits, wdl, value, promo = _evaluate(model, [node.board], device)
+    logits, wdl, value, promo = _evaluate(model, [node.board], device, getattr(model, "_bf16", False))
     node.prior = logits[0]
     node.wdl = wdl[0]
     node.promo = promo[0]

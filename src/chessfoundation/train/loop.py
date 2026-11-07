@@ -114,6 +114,7 @@ def train(
 ) -> dict[str, float]:
     model.to(device)
     model.train()
+    train_model = torch.compile(model) if cfg.compile and torch.device(device).type == "cuda" else model
     optimizer = optimizer or torch.optim.AdamW(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
@@ -127,7 +128,7 @@ def train(
         batch = {k: v.to(device) for k, v in batch_from_records(batch_slice(dataset, step, cfg.batch_size)).items()}
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
-            outputs = model(batch["planes"])
+            outputs = train_model(batch["planes"])
         loss, metrics = compute_loss(outputs, batch)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)

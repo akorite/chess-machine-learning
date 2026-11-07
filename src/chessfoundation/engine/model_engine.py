@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import chess
+import torch
 from torch import nn
 
 from ..config import PRESETS
@@ -27,13 +28,19 @@ class ModelEngine:
         syzygy_path: str = "",
         rng: random.Random | None = None,
         time_config: TimeConfig = DEFAULT_TIME,
+        bf16: bool = False,
+        compile_model: bool = False,
     ):
+        if compile_model and torch.cuda.is_available():
+            model = torch.compile(model)
         self.model = model.eval()
         self.simulations = simulations
         self.book_path = book_path
         self.syzygy_path = syzygy_path
         self.rng = rng or random.Random()
         self.time_config = time_config
+        self.bf16 = bf16
+        self.model._bf16 = bf16
         self.tablebase = None
         if syzygy_path:
             import chess.syzygy
@@ -54,7 +61,7 @@ class ModelEngine:
         budget = allocate(time_ms, ply, self.time_config)
         # shortcut: one simulation per millisecond until throughput is measured per accelerator
         simulations = max(1, min(self.simulations, int(budget)))
-        return search(self.model, board, SearchConfig(simulations=simulations))
+        return search(self.model, board, SearchConfig(simulations=simulations, bf16=self.bf16))
 
     def _setoption(self, parts: list[str]) -> None:
         try:
@@ -140,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--book", default="")
     parser.add_argument("--syzygy", default="")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--bf16", action="store_true")
+    parser.add_argument("--compile", action="store_true")
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)
@@ -148,7 +157,10 @@ def main(argv: list[str] | None = None) -> int:
 
         load(Path(args.checkpoint), model, map_location=args.device)
     model.to(args.device)
-    engine = ModelEngine(model, args.simulations, args.book, args.syzygy)
+    engine = ModelEngine(
+        model, args.simulations, args.book, args.syzygy,
+        bf16=args.bf16, compile_model=args.compile,
+    )
     engine.run_uci()
     return 0
 

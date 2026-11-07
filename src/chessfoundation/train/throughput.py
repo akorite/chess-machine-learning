@@ -22,11 +22,19 @@ class Throughput:
         return project_cu(accel, positions / self.positions_per_second / 3600.0)
 
 
-def measure(model: nn.Module, batch_size: int = 16, device: str | None = None, warmup: int = 2, steps: int = 5) -> Throughput:
+def measure(
+    model: nn.Module,
+    batch_size: int = 16,
+    device: str | None = None,
+    warmup: int = 2,
+    steps: int = 5,
+    bf16: bool = False,
+) -> Throughput:
     model.eval()
     device = device or next(model.parameters()).device.type
     sample = torch.zeros(batch_size, PLANES, 8, 8, device=device)
-    with torch.no_grad():
+    autocast = torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16 and device == "cuda")
+    with torch.no_grad(), autocast:
         for _ in range(warmup):
             model(sample)
         started = time.perf_counter()
