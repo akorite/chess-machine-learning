@@ -60,7 +60,8 @@ def label_record(board: chess.Board, value: float, policy: dict[chess.Move, floa
         if record["policy_prob"][0]:
             first_legal = next((m for m, _ in ranked if board.is_legal(m)), None)
             if first_legal is not None:
-                record["promo"] = max(promo_index(first_legal), 0)
+                index = promo_index(first_legal)
+                record["promo"] = index if index >= 0 else 255
     return record
 
 

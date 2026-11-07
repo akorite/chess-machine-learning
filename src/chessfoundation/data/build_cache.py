@@ -62,9 +62,7 @@ def chessbench_records(
         if not board.is_legal(move):
             continue
         record = record_from_board(board)
-        record["policy"][0] = move_index(move)
-        record["policy_prob"][0] = 65535
-        record["promo"] = max(promo_index(move), 0)
+        set_best_move(record, move)
         record["wdl"] = chessbench.value_to_wdl(float(row[names["value"]]))
         yield record
 

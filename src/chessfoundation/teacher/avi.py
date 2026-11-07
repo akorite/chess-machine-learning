@@ -7,7 +7,7 @@ from collections.abc import Callable
 import chess
 import numpy as np
 
-from ..data.encode import move_index, record_from_board
+from ..data.encode import record_from_board, set_best_move
 
 ValueFn = Callable[[chess.Board], float]
 
@@ -51,10 +51,6 @@ def wdl_from_value(value: float, threshold: float = 0.15) -> int:
 def avi_record(board: chess.Board, value_fn: ValueFn, candidates: list[chess.Move] | None = None) -> np.ndarray:
     move, value = avi_target(board, value_fn, candidates)
     record = record_from_board(board)
-    record["policy"][0] = move_index(move)
-    record["policy_prob"][0] = 65535
-    from ..data.encode import promo_index
-
-    record["promo"] = max(promo_index(move), 0)
+    set_best_move(record, move)
     record["wdl"] = wdl_from_value(value)
     return record

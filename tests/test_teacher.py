@@ -98,3 +98,8 @@ def test_policy_from_scores_survives_mate_scores():
     policy = policy_from_scores(infos, chess.WHITE)
     assert sum(policy.values()) == pytest.approx(1.0)
     assert all(not math.isnan(value) for value in policy.values())
+
+
+def test_avi_record_marks_promo_unknown_for_quiet_moves():
+    record = avi_record(chess.Board(), lambda board: 0.0)
+    assert record["promo"] == 255
