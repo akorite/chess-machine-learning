@@ -1,6 +1,5 @@
 import math
 
-import chess
 import pytest
 
 from chessfoundation.eval.tournament import (

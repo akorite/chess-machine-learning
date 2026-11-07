@@ -6,7 +6,7 @@ from chessfoundation.config import Preset, TrainConfig
 from chessfoundation.data.encode import RECORD_DTYPE
 from chessfoundation.distill.prior_kl import masked_entropy, prior_kl
 from chessfoundation.distill.replay import ConcatDataset, board_from_record
-from chessfoundation.distill.rounds import label_record, label_positions, run_round
+from chessfoundation.distill.rounds import label_positions, label_record, run_round
 from chessfoundation.model.student import Student
 
 

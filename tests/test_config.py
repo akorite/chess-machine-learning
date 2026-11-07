@@ -1,6 +1,6 @@
 import pytest
 
-from chessfoundation.config import ConfigError, PRESETS, load_config
+from chessfoundation.config import PRESETS, ConfigError, load_config
 
 
 def write(tmp_path, text):

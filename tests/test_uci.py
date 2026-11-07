@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from chessfoundation.engine.uci import EngineSpec, nodes_options, rung_options, validate_rung
+from chessfoundation.engine.uci import (
+    EngineSpec,
+    nodes_options,
+    rung_options,
+    validate_rung,
+)
 from chessfoundation.eval.tournament import MatchConfig, run_local
 
 STUB = [sys.executable, str(Path(__file__).with_name("stub_engine.py"))]

@@ -1,6 +1,4 @@
 import chess
-import numpy as np
-import pytest
 
 from chessfoundation.data.encode import (
     PLANES,

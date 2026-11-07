@@ -2,7 +2,12 @@ import chess
 import chess.engine
 import pytest
 
-from chessfoundation.teacher.avi import avi_record, avi_target, successor_values, wdl_from_value
+from chessfoundation.teacher.avi import (
+    avi_record,
+    avi_target,
+    successor_values,
+    wdl_from_value,
+)
 from chessfoundation.teacher.lc0_oracle import policy_from_scores, value_from_score
 
 
@@ -48,7 +53,7 @@ def test_successor_values_negates_child_perspective():
 
 def test_avi_prefers_capturing_a_hanging_queen():
     board = chess.Board("7k/8/8/8/8/8/4q2R/K7 w - - 0 1")
-    move, value = avi_target(board, material_value)
+    move, _value = avi_target(board, material_value)
     assert move == chess.Move.from_uci("h2e2")
 
 

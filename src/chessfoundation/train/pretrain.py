@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import torch
 from torch import nn
 
-from ..config import RunConfig, TrainConfig
+from ..config import TrainConfig
 from ..data.cache import ShardDataset
 from ..model.presets import build_student
 from . import loop

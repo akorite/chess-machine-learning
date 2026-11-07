@@ -5,8 +5,6 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from ..data.encode import PLANES, POLICY_ACTIONS
-
 
 class Heads(nn.Module):
     def __init__(self, dim: int, pv_plies: int = 6):

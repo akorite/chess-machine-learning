@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Sequence
+from collections.abc import Sequence
 
 import numpy as np
 import torch
 from torch import nn
 
 from ..config import TrainConfig
-from ..data.encode import MOVES_LEFT_UNKNOWN, WDL_UNKNOWN, planes_from_bits
+from ..data.encode import MOVES_LEFT_UNKNOWN, planes_from_bits
 
 LOSS_WEIGHTS = {"policy": 1.0, "promo": 0.2, "wdl": 1.0, "pv": 0.5, "moves_left": 0.1}
 PV_PLIES = 6

@@ -14,7 +14,10 @@ class TimeConfig:
     reserve_fraction: float = 0.15
 
 
-def allocate(remaining_ms: float, ply: int, cfg: TimeConfig = TimeConfig()) -> float:
+DEFAULT_TIME = TimeConfig()
+
+
+def allocate(remaining_ms: float, ply: int, cfg: TimeConfig = DEFAULT_TIME) -> float:
     """Time for this move; keeps a reserve for the endgame."""
     if remaining_ms <= 0:
         return 0.0

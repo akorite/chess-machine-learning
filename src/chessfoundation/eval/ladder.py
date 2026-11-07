@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .tournament import (
     MatchResult,
@@ -64,3 +64,52 @@ def climb(
 def best_rung(steps: list[LadderStep]) -> LadderStep | None:
     beaten = [s for s in steps if s.reached]
     return beaten[-1] if beaten else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from ..engine.uci import EngineSpec, nodes_options, rung_options
+    from .report import Row, render
+    from .tournament import MatchConfig, run_local
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--engine", required=True, help="path to the student UCI engine")
+    parser.add_argument("--opponent", required=True, help="path to the pinned opponent")
+    parser.add_argument("--games", type=int, default=400)
+    parser.add_argument("--movetime", type=int, default=50)
+    parser.add_argument("--book", default="")
+    parser.add_argument("--pgn", default="ladder.pgn")
+    parser.add_argument("--out", default="report.md")
+    args = parser.parse_args(argv)
+
+    engine = EngineSpec(args.engine)
+
+    def play(rung: Rung, games: int) -> MatchResult:
+        options = nodes_options(rung.nodes) if rung.nodes else rung_options(rung.uci_elo or 2000)
+        opponent = EngineSpec(args.opponent, options)
+        result = run_local(
+            MatchConfig(
+                white=engine,
+                black=opponent,
+                games=games,
+                movetime_ms=args.movetime,
+                pgn_path=args.pgn,
+            )
+        )
+        return result
+
+    steps = climb(play, games=args.games)
+    best = best_rung(steps)
+    rows = [
+        Row(step.rung.describe(), step.result, f"pinned rung, {args.games} games, 1+0")
+        for step in steps
+    ]
+    with open(args.out, "w", encoding="utf-8") as handle:
+        handle.write(render(rows, best.rung.name if best else None, simulations=None))
+    print(f"wrote {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

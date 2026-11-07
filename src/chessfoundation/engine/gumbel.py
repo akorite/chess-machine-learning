@@ -19,6 +19,9 @@ class SearchConfig:
     c_scale: float = 1.0
 
 
+DEFAULT_SEARCH = SearchConfig()
+
+
 @dataclass(frozen=True)
 class SearchResult:
     move: chess.Move
@@ -52,7 +55,7 @@ def evaluate(model: nn.Module, boards: list[chess.Board], device: str) -> tuple[
 def search(
     model: nn.Module,
     board: chess.Board,
-    cfg: SearchConfig = SearchConfig(),
+    cfg: SearchConfig = DEFAULT_SEARCH,
     rng: np.random.Generator | None = None,
 ) -> SearchResult:
     rng = rng or np.random.default_rng()

@@ -1,5 +1,4 @@
 import chess
-import pytest
 
 from chessfoundation.data import chessbench, gigafish, lc0_games, puzzles, syzygy
 

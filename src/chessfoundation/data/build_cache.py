@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Iterable, Iterator
 
 import chess
 import numpy as np
@@ -12,7 +12,6 @@ import numpy as np
 from . import chessbench, gigafish, lc0_games, puzzles
 from .cache import verify, write_manifest, write_shard
 from .encode import (
-    RECORD_DTYPE,
     move_index,
     promo_index,
     record_from_board,
@@ -22,8 +21,7 @@ from .lichess_evals import depth_bands, iter_evals
 
 
 def _safe(records: Iterable[np.ndarray]) -> Iterator[np.ndarray]:
-    for record in records:
-        yield record
+    yield from records
 
 
 def lichess_records(

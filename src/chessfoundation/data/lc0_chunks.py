@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import struct
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import numpy as np
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Self
 
 import chess
 import chess.engine
@@ -53,7 +54,7 @@ class UciOracle:
         self.multipv = multipv
         self.engine: chess.engine.SimpleEngine | None = None
 
-    def open(self) -> "UciOracle":
+    def open(self) -> UciOracle:
         self.engine = chess.engine.SimpleEngine.popen_uci(self.path)
         if self.options:
             self.engine.configure(dict(self.options))
@@ -64,7 +65,7 @@ class UciOracle:
             self.engine.quit()
             self.engine = None
 
-    def __enter__(self) -> "UciOracle":
+    def __enter__(self) -> Self:
         return self.open()
 
     def __exit__(self, *exc) -> None:

@@ -15,6 +15,7 @@ def tablebase_move(board: chess.Board, tablebase) -> chess.Move | None:
     except (chess.syzygy.MissingTableError, KeyError):
         return None
     best: chess.Move | None = None
+    best_dtz = 0
     for move in board.legal_moves:
         board.push(move)
         try:
@@ -25,5 +26,5 @@ def tablebase_move(board: chess.Board, tablebase) -> chess.Move | None:
             continue
         board.pop()
         if value == target and (best is None or dtz < best_dtz):
-            best, best_dtz = move, dtz
+            best, _best_dtz = move, dtz
     return best

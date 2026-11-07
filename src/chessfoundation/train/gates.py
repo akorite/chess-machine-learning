@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 import torch
@@ -11,7 +11,6 @@ from torch import nn
 
 from ..budget import BudgetState, check_run
 from ..config import BudgetConfig
-from ..data.encode import MOVES_LEFT_UNKNOWN, WDL_UNKNOWN
 from .loop import batch_from_records
 
 

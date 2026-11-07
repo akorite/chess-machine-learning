@@ -1,5 +1,4 @@
 import os
-import random
 import struct
 import subprocess
 import sys
@@ -9,7 +8,6 @@ import chess
 import chess.polyglot
 import chess.syzygy
 import numpy as np
-import pytest
 import torch
 from torch import nn
 
@@ -135,6 +133,7 @@ def test_uci_handshake_and_legal_move():
         [sys.executable, "-m", "chessfoundation.engine.model_engine", "--preset", "p6m", "--simulations", "1"],
         input="uci\nisready\nposition startpos movetime 100\ngo movetime 100\nquit\n",
         capture_output=True,
+        check=False,
         text=True,
         env=env,
         cwd=REPO,
@@ -143,5 +142,5 @@ def test_uci_handshake_and_legal_move():
     output = proc.stdout
     assert "uciok" in output
     assert "readyok" in output
-    best = [line for line in output.splitlines() if line.startswith("bestmove")][0].split()[1]
+    best = next(line for line in output.splitlines() if line.startswith("bestmove")).split()[1]
     assert chess.Move.from_uci(best) in chess.Board().legal_moves

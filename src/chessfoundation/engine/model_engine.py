@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import chess
-import torch
 from torch import nn
 
 from ..config import PRESETS
@@ -16,7 +15,7 @@ from ..model.presets import build_student
 from .book import probe_book
 from .gumbel import SearchConfig, SearchResult, search
 from .tablebase import tablebase_move
-from .time import TimeConfig, allocate
+from .time import DEFAULT_TIME, TimeConfig, allocate
 
 
 class ModelEngine:
@@ -27,7 +26,7 @@ class ModelEngine:
         book_path: str = "",
         syzygy_path: str = "",
         rng: random.Random | None = None,
-        time_config: TimeConfig = TimeConfig(),
+        time_config: TimeConfig = DEFAULT_TIME,
     ):
         self.model = model.eval()
         self.simulations = simulations

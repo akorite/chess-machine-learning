@@ -14,7 +14,6 @@ from chessfoundation.train.gates import (
     gate,
     project_stage,
 )
-from chessfoundation.train.loop import batch_from_records
 
 
 def tiny_model():
