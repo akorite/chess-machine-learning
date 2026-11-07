@@ -11,6 +11,9 @@ dependencies = [
   "huggingface-hub>=0.24",
 ]
 
+[project.optional-dependencies]
+export = ["onnx>=1.16", "onnxscript>=0.1"]
+
 [project.scripts]
 chessfoundation = "chessfoundation.engine.model_engine:main"
 

@@ -52,7 +52,7 @@ class SmolgenAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
             scale=1.0 / math.sqrt(head_dim),
         )
-        attended = attended.transpose(1, 2).reshape(batch, tokens, dim)
+        attended = attended.transpose(1, 2).contiguous().reshape(batch, tokens, dim)
         return self.out(attended)
 
 
