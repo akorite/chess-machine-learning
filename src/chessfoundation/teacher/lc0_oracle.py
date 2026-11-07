@@ -82,7 +82,7 @@ class UciOracle:
 
 class Lc0Oracle(UciOracle):
     def __init__(self, path: str = "lc0", weights: str = "", nodes: int = 64, multipv: int = 4):
-        options = {"MultiPV": multipv}
+        options = {}
         if weights:
             options["WeightsFile"] = weights
         super().__init__(path, options, multipv)
@@ -107,7 +107,7 @@ class Lc0Oracle(UciOracle):
 
 class StockfishOracle(UciOracle):
     def __init__(self, path: str = "stockfish", depth: int = 22, multipv: int = 4):
-        super().__init__(path, {"MultiPV": multipv}, multipv)
+        super().__init__(path, {}, multipv)
         self.depth = depth
 
     def analyse(self, board: chess.Board) -> OracleResult:

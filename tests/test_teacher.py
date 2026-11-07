@@ -103,3 +103,29 @@ def test_policy_from_scores_survives_mate_scores():
 def test_avi_record_marks_promo_unknown_for_quiet_moves():
     record = avi_record(chess.Board(), lambda board: 0.0)
     assert record["promo"] == 255
+
+
+def test_oracle_options_exclude_managed_multipv(monkeypatch):
+    from chessfoundation.teacher.lc0_oracle import Lc0Oracle, StockfishOracle
+
+    captured: list[dict] = []
+
+    class FakeEngine:
+        def configure(self, options):
+            captured.append(options)
+
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(
+        "chessfoundation.teacher.lc0_oracle.chess.engine.SimpleEngine.popen_uci",
+        staticmethod(lambda path: FakeEngine()),
+    )
+
+    with Lc0Oracle(path="x", weights="w.pb.gz", multipv=8):
+        pass
+    with StockfishOracle(path="x", multipv=8):
+        pass
+
+    assert captured == [{"WeightsFile": "w.pb.gz"}]  # empty dict skips configure entirely
+    assert all("MultiPV" not in opts for opts in captured)
