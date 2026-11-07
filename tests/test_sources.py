@@ -71,3 +71,10 @@ def test_local_directory_respects_limit(tmp_path):
     make_parquet(tmp_path / "a.parquet", [30], [1], [0], [None])
     make_parquet(tmp_path / "b.parquet", [30], [1], [0], [None])
     assert len(list(iter_rows(str(tmp_path), limit_shards=1))) == 1
+
+def test_local_directory_finds_nested_shards(tmp_path):
+    nested = tmp_path / "data"
+    nested.mkdir()
+    make_parquet(nested / "a.parquet", [30], [1], [0], [None])
+    make_parquet(tmp_path / "b.parquet", [30], [1], [0], [None])
+    assert len(list(iter_rows(str(tmp_path)))) == 2

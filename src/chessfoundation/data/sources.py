@@ -11,7 +11,7 @@ import pyarrow.parquet as pq
 def resolve_shards(source: str, limit: int = 0) -> list[Path]:
     path = Path(source)
     if path.exists():
-        files = sorted(path.glob("*.parquet")) if path.is_dir() else [path]
+        files = sorted(path.rglob("*.parquet")) if path.is_dir() else [path]
         return files[:limit] if limit else files
     else:
         from huggingface_hub import HfApi, hf_hub_download
