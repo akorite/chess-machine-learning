@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 export = ["onnx>=1.16", "onnxscript>=0.1"]
+dev = ["pytest>=8", "ruff>=0.6", "onnx>=1.16", "onnxscript>=0.1"]
 
 [project.scripts]
 chessfoundation = "chessfoundation.engine.model_engine:main"

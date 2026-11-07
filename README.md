@@ -40,8 +40,18 @@ Depth discipline lives in one place: rows with `depth >= 24` or
 
 ```bash
 python -m chessfoundation.train.pretrain --stage value --data data/cache/gigafish --steps 20000 --out checkpoints/value.pt
-python -m chessfoundation.train.pretrain --stage deep --data data/cache/deep --steps 40000 --out checkpoints/deep.pt
+python -m chessfoundation.train.pretrain --stage deep --data data/cache/deep \
+  --init checkpoints/value.pt --steps 40000 --save-every 2000 \
+  --resume checkpoints/deep.pt --out checkpoints/deep.pt
+python -m chessfoundation.train.gates --checkpoint checkpoints/deep.pt --data data/cache/deep \
+  --previous checkpoints/value-metrics.json
+python -m chessfoundation.quant.verify --reference checkpoints/deep.pt \
+  --candidate checkpoints/deep-int8.pt --data data/cache/deep --min-agreement 0.99
 ```
+
+Pass `--accelerator L4 --hours 6 --phase pretrain` to any training command to run
+the compute-budget preflight before the model loads; without `--accelerator` the
+guard is skipped (local CPU runs).
 
 A distillation round plays the student, labels the reached positions with a
 teacher, and retrains on the round plus replay.
