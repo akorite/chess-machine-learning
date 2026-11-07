@@ -24,14 +24,17 @@ class Student(nn.Module):
         )
         self.heads = Heads(preset.d_model, preset.pv_plies)
 
-    def forward(self, planes: torch.Tensor) -> dict[str, torch.Tensor]:
+    def encode(self, planes: torch.Tensor) -> torch.Tensor:
         x = planes.float()
         if self.stem is not None:
             x = self.stem(x)
         tokens = self.token_proj(x).flatten(2).transpose(1, 2)
         for block in self.blocks:
             tokens = block(tokens)
-        return self.heads(tokens)
+        return tokens
+
+    def forward(self, planes: torch.Tensor) -> dict[str, torch.Tensor]:
+        return self.heads(self.encode(planes))
 
 
 def parameter_count(model: nn.Module) -> int:
