@@ -7,7 +7,7 @@ from torch import nn
 
 
 class Heads(nn.Module):
-    """PV plies use a rank-4 bilinear form; the full dim x dim form costs ~200x more MACs."""
+    """PV plies use a rank-4 bilinear form."""
 
     def __init__(self, dim: int, pv_plies: int = 6, pv_rank: int = 4):
         super().__init__()
@@ -16,8 +16,8 @@ class Heads(nn.Module):
         self.promo = nn.Linear(dim, 4)
         self.wdl = nn.Linear(dim, 3)
         self.moves_left = nn.Linear(dim, 1)
-        self.pv_left = nn.Parameter(torch.zeros(pv_plies, dim, pv_rank))
-        self.pv_right = nn.Parameter(torch.zeros(pv_plies, dim, pv_rank))
+        self.pv_left = nn.Parameter(torch.empty(pv_plies, dim, pv_rank).normal_(std=0.02))
+        self.pv_right = nn.Parameter(torch.empty(pv_plies, dim, pv_rank).normal_(std=0.02))
 
     def forward(self, tokens: torch.Tensor) -> dict[str, torch.Tensor]:
         src = self.src(tokens)

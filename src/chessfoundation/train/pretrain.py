@@ -36,7 +36,7 @@ class MaskedPieceDecoder(nn.Module):
 
 def mask_planes(planes: torch.Tensor, mask_squares: int = 8, generator: torch.Generator | None = None) -> torch.Tensor:
     batch = planes.shape[0]
-    squares = torch.randint(0, 64, (batch, mask_squares), generator=generator)
+    squares = torch.randint(0, 64, (batch, mask_squares), device=planes.device, generator=generator)
     keep = torch.ones(batch, 64, dtype=planes.dtype, device=planes.device)
     keep.scatter_(1, squares, 0.0)
     return planes * keep.view(batch, 1, 8, 8)
@@ -57,6 +57,7 @@ def run_ssl(
     steps: int,
     device: str = "cpu",
 ) -> dict[str, float]:
+    model = model.to(device)
     decoder = MaskedPieceDecoder(model.preset.d_model).to(device)
     optimizer = torch.optim.AdamW(
         list(model.parameters()) + list(decoder.parameters()),
@@ -128,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--hours", type=float, default=0.0)
     parser.add_argument("--phase", default="pretrain")
     parser.add_argument("--qat", action="store_true")
+    parser.add_argument("--compile", action="store_true")
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)
@@ -147,7 +149,10 @@ def main(argv: list[str] | None = None) -> int:
         counts = json.loads(manifest.read_text()).get("counts")
     if args.qat:
         prepare_qat(model)
-    cfg = TrainConfig(batch_size=args.batch_size, lr=args.lr, max_steps=args.steps + start_step)
+    cfg = TrainConfig(
+        batch_size=args.batch_size, lr=args.lr, max_steps=args.steps + start_step,
+        compile=args.compile,
+    )
     metrics = run_stage(
         model, args.stage, args.data, cfg, args.steps, args.device, counts,
         optimizer, start_step, args.out or None, args.save_every,

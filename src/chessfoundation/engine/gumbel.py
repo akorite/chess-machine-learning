@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import chess
 import numpy as np
@@ -24,7 +25,7 @@ class SearchConfig:
     max_considered: int = 16
     c_visit: float = 50.0
     bf16: bool = False
-    mode: str = "gumbel"  # "gumbel" or "puct" fallback for the A/B gate
+    mode: Literal["gumbel", "puct"] = "gumbel"
 
 
 DEFAULT_SEARCH = SearchConfig()
@@ -77,8 +78,8 @@ def _terminal_value(board: chess.Board) -> float:
     return float("nan")
 
 
-def _expand(model: nn.Module, node: _Node, device: str) -> float:
-    logits, wdl, value, promo = _evaluate(model, [node.board], device, getattr(model, "_bf16", False))
+def _expand(model: nn.Module, node: _Node, device: str, bf16: bool = False) -> float:
+    logits, wdl, value, promo = _evaluate(model, [node.board], device, bf16)
     node.prior = logits[0]
     node.wdl = wdl[0]
     node.promo = promo[0]
@@ -116,7 +117,7 @@ def search(
         raise ValueError("no legal moves")
     device = next(model.parameters()).device.type
     root = _Node(board.copy(stack=False))
-    root_value = _expand(model, root, device)
+    root_value = _expand(model, root, device, cfg.bf16)
     root.visits = 1
     root.value_sum = root_value
 
@@ -125,12 +126,10 @@ def search(
     if len(legal) == 1 or budget <= 1:
         return SearchResult(_best_move(root, legal), 1)
 
-    considered = sorted(root.legal, key=lambda i: root.prior[i], reverse=True)[: cfg.max_considered]
-    gumbel = (
-        {i: -np.log(-np.log(rng.random() + 1e-12) + 1e-12) for i in considered}
-        if cfg.mode == "gumbel"
-        else {}
-    )
+    gumbel = {}
+    if cfg.mode == "gumbel":
+        considered = sorted(root.legal, key=lambda i: root.prior[i], reverse=True)[: cfg.max_considered]
+        gumbel = {i: -np.log(-np.log(rng.random() + 1e-12) + 1e-12) for i in considered}
     evaluated = 1
     while evaluated < budget:
         node = root
@@ -140,9 +139,9 @@ def search(
                 value = _terminal_value(node.board)
                 break
             if node is not root and node.visits == 0:
-                value = _expand(model, node, device)
+                value = _expand(model, node, device, cfg.bf16)
                 break
-            index = _select_root(root, gumbel, cfg) if node is root else _select(node, cfg.c_visit)
+            index = _select_root(root, gumbel, cfg.c_visit) if node is root else _select(node, cfg.c_visit)
             child = node.children.get(index)
             if child is None:
                 child_board = node.board.copy(stack=False)
@@ -150,7 +149,7 @@ def search(
                 child = _Node(child_board)
                 node.children[index] = child
                 path.append(child)
-                value = _expand(model, child, device)
+                value = _expand(model, child, device, cfg.bf16)
                 break
             node = child
             path.append(node)
@@ -161,22 +160,21 @@ def search(
         root.visits += 1
         evaluated += 1
 
-    return SearchResult(_best_move(root, legal, gumbel or None, cfg.c_visit, cfg.mode), evaluated)
+    return SearchResult(_best_move(root, legal, gumbel, cfg.c_visit, cfg.mode), evaluated)
 
 
-def _select_root(root: _Node, gumbel: dict[int, float], cfg: SearchConfig) -> int:
+def _select_root(root: _Node, gumbel: dict[int, float], c_visit: float) -> int:
     best_index, best_score = root.legal[0], -np.inf
     for index in root.legal:
-        if cfg.mode == "gumbel" and index not in gumbel:
+        if gumbel and index not in gumbel:
             continue
         child = root.children.get(index)
         score = root.prior[index] + gumbel.get(index, 0.0) + (
-            cfg.c_visit * child.mean if child is not None else 0.0
+            c_visit * child.mean if child is not None else 0.0
         )
         if score > best_score:
             best_index, best_score = index, score
     return best_index
-
 
 def _move_from_index(node: _Node, index: int) -> chess.Move:
     from_square, to_square = divmod(index, 64)

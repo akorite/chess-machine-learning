@@ -11,12 +11,7 @@ import numpy as np
 
 from . import chessbench, gigafish, lc0_games, puzzles
 from .cache import clear_shards, verify, write_manifest, write_shard
-from .encode import (
-    move_index,
-    promo_index,
-    record_from_board,
-    record_from_eval,
-)
+from .encode import move_index, record_from_board, record_from_eval, set_best_move
 from .lichess_evals import depth_bands, iter_evals
 
 
@@ -33,8 +28,16 @@ def lichess_records(
 ) -> Iterator[np.ndarray]:
     for row in iter_evals(source, min_depth, min_knodes, deep=True, limit_shards=limit_shards):
         if counts is not None:
-            band = "24plus" if row.depth >= 24 else "20to23"
+            depth = int(row["depth"] or 0)
+            if depth < 20:
+                band = "lt20"
+            elif depth < 24:
+                band = "20to23"
+            else:
+                band = "24plus"
             counts[band] = counts.get(band, 0) + 1
+            if int(row["knodes"] or 0) >= 100_000:
+                counts["knodes100k"] = counts.get("knodes100k", 0) + 1
         try:
             yield record_from_eval(row.fen, row.cp, row.mate, row.line)
         except (ValueError, chess.InvalidMoveError):

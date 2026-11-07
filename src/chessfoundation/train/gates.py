@@ -64,6 +64,10 @@ def gate(previous: StageMetrics | None, current: StageMetrics, minimum_policy_ga
         )
     if current.value_mae > previous.value_mae:
         raise GateFailed(f"value MAE regressed {previous.value_mae:.4f} -> {current.value_mae:.4f}")
+    if current.pv_accuracy < previous.pv_accuracy:
+        raise GateFailed(
+            f"pv accuracy regressed {previous.pv_accuracy:.4f} -> {current.pv_accuracy:.4f}"
+        )
 
 
 def check_stage_source(stage: str, counts: dict[str, int]) -> None:

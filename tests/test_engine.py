@@ -151,15 +151,11 @@ def test_search_spends_more_than_the_candidate_cap():
     assert result.simulations > 16
 
 def test_puct_search_selects_scripted_policy_move():
-    # PUCT mode must pick the move the policy points at without gumbel noise.
     move = chess.Move.from_uci("e2e4")
-    result = search(
-        ScriptedModel(move),
-        chess.Board(),
-        SearchConfig(simulations=8, mode="puct"),
-        np.random.default_rng(3),
-    )
-    assert result.move == move
+    model = ScriptedModel(move)
+    cfg = SearchConfig(simulations=8, mode="puct")
+    assert search(model, chess.Board(), cfg, np.random.default_rng(3)).move == move
+    assert search(model, chess.Board(), cfg, np.random.default_rng(9)).move == move
 
 
 def test_search_handles_terminal_children():
@@ -169,13 +165,6 @@ def test_search_handles_terminal_children():
     assert result.move in board.legal_moves
 
 
-def test_puct_search_deterministic_across_seeds():
-    model = tiny_model()
-    board = chess.Board()
-    cfg = SearchConfig(simulations=8, mode="puct")
-    first = search(model, board, cfg, np.random.default_rng(4)).move
-    second = search(model, board, cfg, np.random.default_rng(9)).move
-    assert first == second
 
 
 class EntropyModel(ScriptedModel):

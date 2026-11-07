@@ -6,6 +6,7 @@ import argparse
 import random
 import sys
 from pathlib import Path
+from typing import Literal
 
 import chess
 import torch
@@ -30,9 +31,9 @@ class ModelEngine:
         time_config: TimeConfig = DEFAULT_TIME,
         bf16: bool = False,
         compile_model: bool = False,
-        search_mode: str = "gumbel",
+        search_mode: Literal["gumbel", "puct"] = "gumbel",
     ):
-        if compile_model and torch.cuda.is_available():
+        if compile_model and next(model.parameters()).device.type == "cuda":
             model = torch.compile(model)
         self.model = model.eval()
         self.simulations = simulations
@@ -42,7 +43,7 @@ class ModelEngine:
         self.time_config = time_config
         self.search_mode = search_mode
         self.bf16 = bf16
-        self.model._bf16 = bf16
+
         self.tablebase = None
         if syzygy_path:
             import chess.syzygy
@@ -53,14 +54,14 @@ class ModelEngine:
                 print(f"warning: syzygy disabled for {syzygy_path}: {exc}", file=sys.stderr)
                 self.tablebase = None
 
-    def best_move(self, board: chess.Board, time_ms: float = 400.0, ply: int = 0) -> SearchResult:
+    def best_move(self, board: chess.Board, time_ms: float = 400.0, ply: int = 0, movetime_ms: float | None = None) -> SearchResult:
         book = probe_book(self.book_path, board, self.rng)
         if book is not None and ply < 24:
             return SearchResult(book, 0)
         probing = tablebase_move(board, self.tablebase)
         if probing is not None:
             return SearchResult(probing, 0)
-        budget = allocate(time_ms, ply, self.time_config)
+        budget = movetime_ms if movetime_ms is not None else allocate(time_ms, ply, self.time_config)
         # shortcut: one simulation per millisecond until throughput is measured per accelerator
         simulations = max(1, min(self.simulations, int(budget)))
         return search(
@@ -77,6 +78,8 @@ class ModelEngine:
             return
         if name == ["Simulations"]:
             self.simulations = max(1, int(value))
+        elif name == ["SearchMode"]:
+            self.search_mode = value
 
     def run_uci(self, stdin=sys.stdin, stdout=sys.stdout) -> None:
         board = chess.Board()
@@ -98,13 +101,13 @@ class ModelEngine:
                 try:
                     board = _parse_position(parts)
                 except (ValueError, chess.InvalidMoveError, chess.IllegalMoveError) as exc:
+                    board = chess.Board()
                     print(f"warning: bad position command: {exc}", file=sys.stderr)
             elif command == "setoption":
                 self._setoption(parts)
             elif command == "go":
                 try:
-                    remaining = _clock_for(board.turn, parts)
-                    result = self.best_move(board, remaining, ply=board.ply())
+                    result = self.best_move(board, _clock_for(board.turn, parts), ply=board.ply(), movetime_ms=_movetime(parts))
                     stdout.write(f"info nodes {result.simulations} string {result.simulations} sims\n")
                     stdout.write(f"bestmove {result.move.uci()}\n")
                 except (ValueError, KeyError, RuntimeError) as exc:  # the protocol must still answer
@@ -139,11 +142,17 @@ def _clock_for(turn: chess.Color, parts: list[str]) -> float:
         except (IndexError, ValueError):
             return 400.0
     if "movetime" in parts:
-        try:
-            return float(parts[parts.index("movetime") + 1])
-        except (IndexError, ValueError):
-            return 400.0
+        return float("inf")
     return 400.0
+
+
+def _movetime(parts: list[str]) -> float | None:
+    if "movetime" not in parts:
+        return None
+    try:
+        return float(parts[parts.index("movetime") + 1])
+    except (IndexError, ValueError):
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
