@@ -28,11 +28,12 @@ def measure(
     device: str | None = None,
     warmup: int = 2,
     steps: int = 5,
+    bf16: bool = False,
 ) -> Throughput:
     model.eval()
     device = device or next(model.parameters()).device.type
     sample = torch.zeros(batch_size, PLANES, 8, 8, device=device)
-    autocast = torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=torch.device(device).type == "cuda")
+    autocast = torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16 and torch.device(device).type == "cuda")
     with torch.no_grad(), autocast:
         for _ in range(warmup):
             model(sample)
