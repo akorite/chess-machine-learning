@@ -10,7 +10,6 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Preset:
-    name: str
     d_model: int
     n_layers: int
     n_heads: int
@@ -20,8 +19,8 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "p6m": Preset("p6m", d_model=296, n_layers=8, n_heads=8),
-    "p20m": Preset("p20m", d_model=480, n_layers=12, n_heads=8),
+    "p6m": Preset(d_model=296, n_layers=8, n_heads=8),
+    "p20m": Preset(d_model=480, n_layers=12, n_heads=8),
 }
 
 
@@ -34,14 +33,12 @@ class DataConfig:
     lc0_chunks: str = ""
     min_depth: int = 24
     min_knodes: int = 100_000
-    pv_len: int = 6
     shard_records: int = 100_000
     max_shards: int = 0
 
 
 @dataclass(frozen=True)
 class TrainConfig:
-    preset: str = "p20m"
     batch_size: int = 256
     lr: float = 3e-4
     warmup_steps: int = 500

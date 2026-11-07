@@ -18,7 +18,7 @@ class QuantReport:
     move_agreement: float
     value_mae_delta: float
     latency_fp_ms: float
-    latency_int8_ms: float
+    latency_candidate_ms: float
 
 
 def value_mae(outputs: dict[str, torch.Tensor], wdl: torch.Tensor) -> float:
@@ -64,5 +64,36 @@ def compare(
         if mae_reference
         else float("nan"),
         latency_fp_ms=fp.latency_ms_batch1,
-        latency_int8_ms=int8.latency_ms_batch1,
+        latency_candidate_ms=int8.latency_ms_batch1,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+    from pathlib import Path
+
+    from ..data.cache import ShardDataset
+    from ..model.presets import build_student
+    from ..train.checkpoint import load
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reference", required=True)
+    parser.add_argument("--candidate", required=True)
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--preset", default="p6m", choices=["p6m", "p20m"])
+    parser.add_argument("--limit", type=int, default=512)
+    parser.add_argument("--min-agreement", type=float, default=0.99)
+    args = parser.parse_args(argv)
+
+    reference = build_student(args.preset)
+    candidate = build_student(args.preset)
+    load(Path(args.reference), reference)
+    load(Path(args.candidate), candidate)
+    report = compare(reference, candidate, ShardDataset(args.data), args.limit)
+    print(json.dumps(report.__dict__, indent=2))
+    return 0 if report.move_agreement >= args.min_agreement else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

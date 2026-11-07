@@ -40,7 +40,8 @@ class ModelEngine:
 
             try:
                 self.tablebase = chess.syzygy.open_tablebase(syzygy_path)
-            except OSError:
+            except OSError as exc:
+                print(f"warning: syzygy disabled for {syzygy_path}: {exc}", file=sys.stderr)
                 self.tablebase = None
 
     def best_move(self, board: chess.Board, time_ms: float = 400.0, ply: int = 0) -> SearchResult:
@@ -54,6 +55,15 @@ class ModelEngine:
         # shortcut: one simulation per millisecond until throughput is measured per accelerator
         simulations = max(1, min(self.simulations, int(budget)))
         return search(self.model, board, SearchConfig(simulations=simulations))
+
+    def _setoption(self, parts: list[str]) -> None:
+        try:
+            name = parts[parts.index("name") + 1 : parts.index("value")]
+            value = parts[parts.index("value") + 1]
+        except (ValueError, IndexError):
+            return
+        if name == ["Simulations"]:
+            self.simulations = max(1, int(value))
 
     def run_uci(self, stdin=sys.stdin, stdout=sys.stdout) -> None:
         board = chess.Board()
@@ -71,12 +81,22 @@ class ModelEngine:
             elif command == "ucinewgame":
                 board = chess.Board()
             elif command == "position":
-                board = _parse_position(parts)
+                try:
+                    board = _parse_position(parts)
+                except (ValueError, chess.InvalidMoveError, chess.IllegalMoveError) as exc:
+                    print(f"warning: bad position command: {exc}", file=sys.stderr)
+            elif command == "setoption":
+                self._setoption(parts)
             elif command == "go":
-                remaining = _clock_for(board.turn, parts)
-                result = self.best_move(board, remaining, ply=board.ply())
-                stdout.write(f"info nodes {result.simulations} string {result.simulations} sims\n")
-                stdout.write(f"bestmove {result.move.uci()}\n")
+                try:
+                    remaining = _clock_for(board.turn, parts)
+                    result = self.best_move(board, remaining, ply=board.ply())
+                    stdout.write(f"info nodes {result.simulations} string {result.simulations} sims\n")
+                    stdout.write(f"bestmove {result.move.uci()}\n")
+                except (ValueError, KeyError, RuntimeError) as exc:  # the protocol must still answer
+                    print(f"warning: search failed: {exc}", file=sys.stderr)
+                    fallback = next(iter(board.legal_moves), None)
+                    stdout.write(f"bestmove {fallback.uci() if fallback else '0000'}\n")
             elif command == "quit":
                 break
             stdout.flush()

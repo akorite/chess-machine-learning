@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -10,12 +11,14 @@ import numpy as np
 import torch
 from torch import nn
 
-from ..config import TrainConfig
-from ..data.cache import ShardDataset
+from ..budget import read_colab_state
+from ..config import RunConfig, TrainConfig
+from ..data.cache import MANIFEST, ShardDataset
 from ..model.presets import build_student
+from ..quant.qat import convert, prepare_qat
 from . import loop
-from .checkpoint import save
-from .gates import check_stage_source
+from .checkpoint import load, save
+from .gates import check_stage_source, project_stage
 
 STAGES = ("ssl", "value", "deep")
 
@@ -32,12 +35,11 @@ class MaskedPieceDecoder(nn.Module):
 
 
 def mask_planes(planes: torch.Tensor, mask_squares: int = 8, generator: torch.Generator | None = None) -> torch.Tensor:
-    masked = planes.clone()
-    batch = masked.shape[0]
+    batch = planes.shape[0]
     squares = torch.randint(0, 64, (batch, mask_squares), generator=generator)
-    for row in range(batch):
-        masked[row, :, squares[row] // 8, squares[row] % 8] = 0.0
-    return masked
+    keep = torch.ones(batch, 64, dtype=planes.dtype, device=planes.device)
+    keep.scatter_(1, squares, 0.0)
+    return planes * keep.view(batch, 1, 8, 8)
 
 
 def ssl_loss(model: nn.Module, decoder: MaskedPieceDecoder, planes: torch.Tensor) -> torch.Tensor:
@@ -83,6 +85,10 @@ def run_stage(
     steps: int,
     device: str = "cpu",
     counts: dict[str, int] | None = None,
+    optimizer: torch.optim.Optimizer | None = None,
+    start_step: int = 0,
+    save_path: str | Path | None = None,
+    save_every: int = 0,
 ) -> dict[str, float]:
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage!r}")
@@ -91,7 +97,18 @@ def run_stage(
     dataset = ShardDataset(data_dir)
     if stage == "ssl":
         return run_ssl(model, dataset, cfg, steps, device)
-    return loop.train(model, dataset, cfg, steps, device)
+    if optimizer is None:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    done = 0
+    metrics: dict[str, float] = {}
+    while done < steps:
+        chunk = min(save_every or (steps - done), steps - done)
+        metrics = loop.train(model, dataset, cfg, chunk, device, optimizer, start_step + done)
+        done += chunk
+        if save_path:
+            save(save_path, model, optimizer, step=start_step + done, meta={"stage": stage})
+    metrics["step"] = float(start_step + done)
+    return metrics
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -104,14 +121,42 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--out", default="")
+    parser.add_argument("--init", default="", help="checkpoint to start from")
+    parser.add_argument("--resume", default="", help="checkpoint to resume training")
+    parser.add_argument("--save-every", type=int, default=0)
+    parser.add_argument("--accelerator", default="")
+    parser.add_argument("--hours", type=float, default=0.0)
+    parser.add_argument("--phase", default="pretrain")
+    parser.add_argument("--qat", action="store_true")
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)
-    cfg = TrainConfig(preset=args.preset, batch_size=args.batch_size, lr=args.lr, max_steps=args.steps)
-    metrics = run_stage(model, args.stage, args.data, cfg, args.steps, args.device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    start_step = 0
+    if args.init:
+        load(args.init, model)
+    if args.resume:
+        start_step = int(load(args.resume, model, optimizer)["step"])
+    if args.accelerator:
+        project_stage(
+            RunConfig().budget, read_colab_state(), args.accelerator, args.hours, args.phase
+        )
+    counts = None
+    manifest = Path(args.data) / MANIFEST
+    if manifest.exists():
+        counts = json.loads(manifest.read_text()).get("counts")
+    if args.qat:
+        prepare_qat(model)
+    cfg = TrainConfig(batch_size=args.batch_size, lr=args.lr, max_steps=args.steps + start_step)
+    metrics = run_stage(
+        model, args.stage, args.data, cfg, args.steps, args.device, counts,
+        optimizer, start_step, args.out or None, args.save_every,
+    )
+    if args.qat:
+        convert(model)
     print(metrics)
     if args.out:
-        save(args.out, model, step=args.steps, meta={"stage": args.stage, "metrics": metrics})
+        save(args.out, model, optimizer, step=start_step + args.steps, meta={"stage": args.stage, "metrics": metrics})
     return 0
 
 

@@ -8,7 +8,7 @@ from chessfoundation.train import checkpoint, loop, throughput
 
 
 def tiny_model():
-    return Student(Preset("tiny", d_model=32, n_layers=2, n_heads=4, stem_channels=8, stem_blocks=1))
+    return Student(Preset(d_model=32, n_layers=2, n_heads=4, stem_channels=8, stem_blocks=1))
 
 
 def tiny_dataset(n=32):

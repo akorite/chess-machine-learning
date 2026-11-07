@@ -18,6 +18,7 @@ def probe_book(path: str | Path, board: chess.Board, rng: random.Random | None =
             entries = list(reader.find_all(board))
     except (OSError, KeyError):
         return None
+    entries = [entry for entry in entries if board.is_legal(entry.move)]
     if not entries:
         return None
     total = sum(entry.weight for entry in entries) or len(entries)

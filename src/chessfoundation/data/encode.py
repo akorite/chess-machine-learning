@@ -12,6 +12,7 @@ PIECE_ORDER = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, 
 WDL_UNKNOWN = 255
 MOVES_LEFT_UNKNOWN = 255
 DRAW_CP = 50
+POLICY_PROB_MAX = 65535
 
 RECORD_DTYPE = np.dtype(
     [
@@ -101,6 +102,26 @@ def record_from_board(board: chess.Board) -> np.ndarray:
     return record
 
 
+def planes_from_bits_batch(bits: np.ndarray, meta: np.ndarray) -> np.ndarray:
+    """Vectorised planes for a batch of records; one allocation per call."""
+    bits = np.ascontiguousarray(bits, dtype="<u8")
+    bytes_2d = bits.view(np.uint8).reshape(-1, 12, 8)
+    cells = np.unpackbits(bytes_2d, axis=2, bitorder="little").reshape(-1, 12, 8, 8)
+    out = np.zeros((cells.shape[0], PLANES, 8, 8), dtype=np.uint8)
+    out[:, :12] = cells
+    castling = meta[:, 0]
+    for i in range(4):
+        out[:, 12 + i] = ((castling >> i) & 1)[:, None, None]
+    ep = meta[:, 1].astype(np.int64)
+    rows, cols = np.divmod(ep - 1, 8)
+    valid = ep > 0
+    out[np.arange(len(ep))[valid], 16, rows[valid], cols[valid]] = 1
+    out[:, 17] = (meta[:, 2] == 1)[:, None, None]
+    out[:, 18] = np.minimum(meta[:, 3], 100)[:, None, None]
+    out[:, 19] = meta[:, 4][:, None, None]
+    return out
+
+
 def legal_masks(board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
     policy = np.zeros(POLICY_ACTIONS, dtype=bool)
     promo = np.zeros(4, dtype=bool)
@@ -125,6 +146,13 @@ def wdl_from_mate(mate: int, white_to_move: bool) -> int:
     return 2 if (mate > 0) == white_to_move else 0
 
 
+def set_best_move(record: np.ndarray, move: chess.Move, prob: int = POLICY_PROB_MAX) -> None:
+    record["policy"][0] = move_index(move)
+    record["policy_prob"][0] = prob
+    index = promo_index(move)
+    record["promo"] = index if index >= 0 else 255
+
+
 def record_from_eval(
     fen: str,
     cp: int | None,
@@ -143,7 +171,7 @@ def record_from_eval(
     record["moves_left"] = MOVES_LEFT_UNKNOWN if unknown else int(moves_left)
 
     moves: list[chess.Move] = []
-    for token in pv_uci.split():
+    for token in pv_uci.split()[:6]:
         try:
             move = chess.Move.from_uci(token)
         except ValueError:
@@ -153,9 +181,7 @@ def record_from_eval(
         moves.append(move)
         board.push(move)
     if moves:
-        record["policy"][0] = move_index(moves[0])
-        record["policy_prob"][0] = 65535
-        record["promo"] = max(promo_index(moves[0]), 0)
+        set_best_move(record, moves[0])
         for i, move in enumerate(moves[:6]):
             record["pv"][i] = move_index(move)
     return record

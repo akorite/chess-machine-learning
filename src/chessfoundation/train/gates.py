@@ -78,3 +78,39 @@ def project_stage(
     cfg: BudgetConfig, state: BudgetState, accel: str, hours: float, phase: str = "pretrain"
 ) -> float:
     return check_run(cfg, state, accel, hours, phase)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import json
+    from pathlib import Path
+
+    from ..data.cache import ShardDataset
+    from ..model.presets import build_student
+    from .checkpoint import load
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--data", required=True)
+    parser.add_argument("--preset", default="p6m", choices=["p6m", "p20m"])
+    parser.add_argument("--limit", type=int, default=512)
+    parser.add_argument("--previous", default="", help="JSON with the prior stage metrics")
+    parser.add_argument("--min-policy-gain", type=float, default=0.0)
+    args = parser.parse_args(argv)
+
+    model = build_student(args.preset)
+    load(Path(args.checkpoint), model)
+    metrics = evaluate(model, ShardDataset(args.data), args.limit)
+    print(json.dumps(metrics.__dict__, indent=2))
+    if args.previous:
+        previous = StageMetrics(**json.loads(Path(args.previous).read_text()))
+        try:
+            gate(previous, metrics, args.min_policy_gain)
+        except GateFailed as exc:
+            print(f"gate failed: {exc}")
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -107,6 +107,8 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
     machine without the binary. Colours alternate so both engines get both sides.
     """
     rng = random.Random(seed)
+    path = Path(cfg.pgn_path or "match.pgn")
+    path.parent.mkdir(parents=True, exist_ok=True)
     engines = {chess.WHITE: cfg.white.open(), chess.BLACK: cfg.black.open()}
     wins = draws = losses = 0
     games: list[str] = []
@@ -122,14 +124,19 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
                 if spec_colour == chess.WHITE
                 else {chess.WHITE: engines[chess.BLACK], chess.BLACK: engines[chess.WHITE]}
             )
+            stalled = False
             while not board.is_game_over(claim_draw=True):
                 engine = engine_by_colour[board.turn]
                 move = engine.play(board, chess.engine.Limit(time=cfg.movetime_ms / 1000.0)).move
                 if move is None:
+                    stalled = True
                     break
                 board.push(move)
             outcome = board.outcome(claim_draw=True)
-            winner = outcome.winner if outcome is not None else None
+            if stalled:
+                winner = chess.BLACK if board.turn == chess.WHITE else chess.WHITE
+            else:
+                winner = outcome.winner if outcome is not None else None
             if winner is None:
                 draws += 1
             elif winner == spec_colour:
@@ -140,9 +147,12 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
             game.headers["White"] = "white" if spec_colour == chess.WHITE else "black"
             game.headers["Black"] = "black" if spec_colour == chess.WHITE else "white"
             games.append(str(game))
+            path.write_text("\n\n".join(games))
     finally:
         for engine in engines.values():
-            engine.quit()
+            try:
+                engine.quit()
+            except chess.engine.EngineError:
+                pass
     path = Path(cfg.pgn_path or "match.pgn")
-    path.write_text("\n\n".join(games))
     return MatchResult(wins, draws, losses, str(path))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,9 @@ def save(
         "step": step,
         "meta": meta or {},
     }
-    torch.save(payload, path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, temporary)
+    os.replace(temporary, path)
     return path
 
 
@@ -34,7 +37,7 @@ def load(
     optimizer: torch.optim.Optimizer | None = None,
     map_location: str = "cpu",
 ) -> dict[str, Any]:
-    payload = torch.load(path, map_location=map_location, weights_only=False)
+    payload = torch.load(path, map_location=map_location, weights_only=True)
     model.load_state_dict(payload["model"])
     if optimizer is not None and payload.get("optimizer") is not None:
         optimizer.load_state_dict(payload["optimizer"])

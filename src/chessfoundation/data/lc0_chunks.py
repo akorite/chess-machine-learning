@@ -6,6 +6,8 @@ guessable, so move decoding needs the index list, fetched at data-build time.
 
 from __future__ import annotations
 
+import os
+import shutil
 import struct
 import urllib.request
 from collections.abc import Iterator
@@ -50,8 +52,13 @@ def top_moves(probabilities: np.ndarray, policy_index: list[str], k: int = 8) ->
 
 def fetch_policy_index(dest: str | Path) -> Path:
     path = Path(dest)
-    if not path.exists():
-        urllib.request.urlretrieve(POLICY_INDEX_URL, path)
+    if path.exists():
+        return path
+    temporary = path.with_suffix(path.suffix + ".part")
+    with urllib.request.urlopen(POLICY_INDEX_URL, timeout=30) as response, open(temporary, "wb") as handle:
+        shutil.copyfileobj(response, handle)
+    load_policy_index(temporary)
+    os.replace(temporary, path)
     return path
 
 

@@ -54,8 +54,8 @@ def climb(
         score = elo_from_score(raw)
         low = elo_from_score(raw_low)
         high = elo_from_score(raw_high)
-        reached = interval_excludes_even(raw, raw_low, raw_high)
-        steps.append(LadderStep(rung, result, score, low, high, reached and result.score > 0.5))
+        reached = interval_excludes_even(raw, raw_low, raw_high) and result.score > 0.5
+        steps.append(LadderStep(rung, result, score, low, high, reached))
         if not reached:
             break
     return steps
@@ -69,7 +69,7 @@ def best_rung(steps: list[LadderStep]) -> LadderStep | None:
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    from ..engine.uci import EngineSpec, nodes_options, rung_options
+    from ..engine.uci import EngineSpec, nodes_options, rung_options, validate_rung
     from .report import Row, render
     from .tournament import MatchConfig, run_local
 
@@ -88,13 +88,18 @@ def main(argv: list[str] | None = None) -> int:
     def play(rung: Rung, games: int) -> MatchResult:
         options = nodes_options(rung.nodes) if rung.nodes else rung_options(rung.uci_elo or 2000)
         opponent = EngineSpec(args.opponent, options)
+        probe = opponent.open()
+        try:
+            validate_rung(probe, options)
+        finally:
+            probe.quit()
         result = run_local(
             MatchConfig(
                 white=engine,
                 black=opponent,
                 games=games,
                 movetime_ms=args.movetime,
-                pgn_path=args.pgn,
+                pgn_path=f"{args.pgn}.{rung.name}.pgn",
             )
         )
         return result

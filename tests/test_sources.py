@@ -65,3 +65,9 @@ def test_depth_bands_report_counts(tmp_path):
         "24plus": 2,
         "knodes100k": 1,
     }
+
+
+def test_local_directory_respects_limit(tmp_path):
+    make_parquet(tmp_path / "a.parquet", [30], [1], [0], [None])
+    make_parquet(tmp_path / "b.parquet", [30], [1], [0], [None])
+    assert len(list(iter_rows(str(tmp_path), limit_shards=1))) == 1

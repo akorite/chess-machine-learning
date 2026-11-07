@@ -34,8 +34,8 @@ def parse_colab_usage(text: str) -> BudgetState:
 
 def read_colab_state(runner=subprocess.run) -> BudgetState:
     try:
-        proc = runner(["colab", "usage"], capture_output=True, text=True, check=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
+        proc = runner(["colab", "usage"], capture_output=True, text=True, check=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
         raise BudgetExceeded(f"`colab usage` unavailable: {exc}") from exc
     return parse_colab_usage(proc.stdout)
 

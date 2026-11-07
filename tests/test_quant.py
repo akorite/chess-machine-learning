@@ -12,7 +12,7 @@ from chessfoundation.quant import export, qat, verify
 
 
 def tiny_model():
-    return Student(Preset("tiny", d_model=32, n_layers=2, n_heads=4, stem_channels=8, stem_blocks=1))
+    return Student(Preset(d_model=32, n_layers=2, n_heads=4, stem_channels=8, stem_blocks=1))
 
 
 def dataset(n=16):
@@ -62,7 +62,7 @@ def test_compare_identical_models_agrees_fully():
     report = verify.compare(model, copy.deepcopy(model), dataset(8))
     assert report.move_agreement == pytest.approx(1.0)
     assert report.value_mae_delta == pytest.approx(0.0, abs=1e-6)
-    assert report.latency_fp_ms > 0 and report.latency_int8_ms > 0
+    assert report.latency_fp_ms > 0 and report.latency_candidate_ms > 0
 
 
 def test_compare_detects_disagreement():

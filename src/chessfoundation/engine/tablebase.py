@@ -12,7 +12,7 @@ def tablebase_move(board: chess.Board, tablebase) -> chess.Move | None:
         return None
     try:
         target = tablebase.probe_wdl(board)
-    except (chess.syzygy.MissingTableError, KeyError):
+    except (chess.syzygy.MissingTableError, KeyError, OSError):
         return None
     best: chess.Move | None = None
     best_dtz = 0
@@ -21,10 +21,10 @@ def tablebase_move(board: chess.Board, tablebase) -> chess.Move | None:
         try:
             value = -tablebase.probe_wdl(board)
             dtz = abs(tablebase.probe_dtz(board))
-        except (chess.syzygy.MissingTableError, KeyError):
+        except (chess.syzygy.MissingTableError, KeyError, OSError):
             board.pop()
             continue
         board.pop()
         if value == target and (best is None or dtz < best_dtz):
-            best, _best_dtz = move, dtz
+            best, best_dtz = move, dtz
     return best

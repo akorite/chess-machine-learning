@@ -53,6 +53,19 @@ def write_manifest(directory: str | Path, counts: dict[str, int]) -> Path:
     return path
 
 
+def clear_shards(directory: str | Path) -> None:
+    directory = Path(directory)
+    for path in shard_paths(directory):
+        path.unlink()
+    manifest = directory / MANIFEST
+    if manifest.exists():
+        manifest.unlink()
+
+
+def _safe_name(name: str) -> bool:
+    return Path(name).name == name and name not in (".", "..")
+
+
 def verify(directory: str | Path) -> list[str]:
     directory = Path(directory)
     manifest_path = directory / MANIFEST
@@ -61,6 +74,9 @@ def verify(directory: str | Path) -> list[str]:
     manifest = json.loads(manifest_path.read_text())
     errors = []
     for name, entry in manifest["shards"].items():
+        if not _safe_name(name):
+            errors.append(f"unsafe shard name {name}")
+            continue
         path = directory / name
         if not path.exists():
             errors.append(f"missing shard {name}")
@@ -76,6 +92,9 @@ class ShardDataset:
         self.shards = [np.memmap(path, dtype=RECORD_DTYPE, mode="r") for path in shard_paths(directory)]
         if not self.shards:
             raise ValueError(f"no shards in {directory}")
+        problems = verify(directory)
+        if problems:
+            raise ValueError(f"cache {directory} failed verification: {problems}")
         self.ends = np.cumsum([0] + [len(s) for s in self.shards])
 
     def __len__(self) -> int:

@@ -62,3 +62,9 @@ def test_solve_rate_reports_fraction():
         return chess.Move.from_uci("a1a2")
 
     assert solve_rate(puzzles, analyse) == pytest.approx(0.5)
+
+
+def test_ladder_stops_after_a_decisive_loss():
+    steps = climb(lambda rung, games: make_result(0.0))
+    assert len(steps) == 1
+    assert not steps[0].reached

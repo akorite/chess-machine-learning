@@ -17,7 +17,7 @@ from chessfoundation.train.gates import (
 
 
 def tiny_model():
-    return Student(Preset("tiny", d_model=32, n_layers=1, n_heads=4, stem_channels=8, stem_blocks=1))
+    return Student(Preset(d_model=32, n_layers=1, n_heads=4, stem_channels=8, stem_blocks=1))
 
 
 def records(n=8):

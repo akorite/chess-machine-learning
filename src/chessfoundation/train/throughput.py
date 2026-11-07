@@ -8,7 +8,8 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from ..budget import CU_PER_HOUR
+from ..budget import CU_PER_HOUR, project_cu
+from ..data.encode import PLANES
 
 
 @dataclass(frozen=True)
@@ -18,13 +19,13 @@ class Throughput:
     batch_size: int
 
     def cu_projection(self, accel: str, positions: int) -> float:
-        hours = positions / self.positions_per_second / 3600.0
-        return CU_PER_HOUR[accel] * hours
+        return project_cu(accel, positions / self.positions_per_second / 3600.0)
 
 
-def measure(model: nn.Module, batch_size: int = 16, device: str = "cpu", warmup: int = 2, steps: int = 5) -> Throughput:
+def measure(model: nn.Module, batch_size: int = 16, device: str | None = None, warmup: int = 2, steps: int = 5) -> Throughput:
     model.eval()
-    sample = torch.zeros(batch_size, 20, 8, 8, device=device)
+    device = device or next(model.parameters()).device.type
+    sample = torch.zeros(batch_size, PLANES, 8, 8, device=device)
     with torch.no_grad():
         for _ in range(warmup):
             model(sample)
@@ -32,7 +33,7 @@ def measure(model: nn.Module, batch_size: int = 16, device: str = "cpu", warmup:
         for _ in range(steps):
             model(sample)
         elapsed = time.perf_counter() - started
-        single = torch.zeros(1, 20, 8, 8, device=device)
+        single = torch.zeros(1, PLANES, 8, 8, device=device)
         model(single)
         single_started = time.perf_counter()
         for _ in range(5):

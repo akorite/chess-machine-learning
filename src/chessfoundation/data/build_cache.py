@@ -10,7 +10,7 @@ import chess
 import numpy as np
 
 from . import chessbench, gigafish, lc0_games, puzzles
-from .cache import verify, write_manifest, write_shard
+from .cache import clear_shards, verify, write_manifest, write_shard
 from .encode import (
     move_index,
     promo_index,
@@ -25,9 +25,16 @@ def _safe(records: Iterable[np.ndarray]) -> Iterator[np.ndarray]:
 
 
 def lichess_records(
-    source: str, min_depth: int, min_knodes: int, limit_shards: int = 0
+    source: str,
+    min_depth: int,
+    min_knodes: int,
+    limit_shards: int = 0,
+    counts: dict[str, int] | None = None,
 ) -> Iterator[np.ndarray]:
     for row in iter_evals(source, min_depth, min_knodes, deep=True, limit_shards=limit_shards):
+        if counts is not None:
+            band = "24plus" if row.depth >= 24 else "20to23"
+            counts[band] = counts.get(band, 0) + 1
         try:
             yield record_from_eval(row.fen, row.cp, row.mate, row.line)
         except (ValueError, chess.InvalidMoveError):
@@ -92,6 +99,7 @@ def build(
 ) -> dict[str, int]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    clear_shards(out)
     buffer: list[np.ndarray] = []
     total = 0
     shard_index = 0
@@ -149,11 +157,13 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = {}
     if args.source == "lichess":
+        counts = {}
         records = lichess_records(
             args.source_path or "Lichess/chess-position-evaluations",
             args.min_depth,
             args.min_knodes,
             args.limit_shards,
+            counts,
         )
     elif args.source == "gigafish":
         records = gigafish_records(

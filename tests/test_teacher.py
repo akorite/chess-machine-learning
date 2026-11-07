@@ -1,3 +1,5 @@
+import math
+
 import chess
 import chess.engine
 import pytest
@@ -75,3 +77,24 @@ def test_wdl_threshold():
     assert wdl_from_value(0.5) == 2
     assert wdl_from_value(-0.5) == 0
     assert wdl_from_value(0.0) == 1
+
+
+def test_policy_from_scores_is_side_to_move_relative():
+    infos = [
+        {"pv": [chess.Move.from_uci("e2e4")], "score": chess.engine.PovScore(chess.engine.Cp(500), chess.WHITE)},
+        {"pv": [chess.Move.from_uci("d2d4")], "score": chess.engine.PovScore(chess.engine.Cp(0), chess.WHITE)},
+    ]
+    white = policy_from_scores(infos, chess.WHITE)
+    black = policy_from_scores(infos, chess.BLACK)
+    assert white[chess.Move.from_uci("e2e4")] > white[chess.Move.from_uci("d2d4")]
+    assert black[chess.Move.from_uci("e2e4")] < black[chess.Move.from_uci("d2d4")]
+
+
+def test_policy_from_scores_survives_mate_scores():
+    infos = [
+        {"pv": [chess.Move.from_uci("e2e4")], "score": chess.engine.PovScore(chess.engine.Mate(3), chess.WHITE)},
+        {"pv": [chess.Move.from_uci("d2d4")], "score": chess.engine.PovScore(chess.engine.Cp(20), chess.WHITE)},
+    ]
+    policy = policy_from_scores(infos, chess.WHITE)
+    assert sum(policy.values()) == pytest.approx(1.0)
+    assert all(not math.isnan(value) for value in policy.values())

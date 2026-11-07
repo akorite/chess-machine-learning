@@ -12,6 +12,7 @@ def resolve_shards(source: str, limit: int = 0) -> list[Path]:
     path = Path(source)
     if path.exists():
         files = sorted(path.glob("*.parquet")) if path.is_dir() else [path]
+        return files[:limit] if limit else files
     else:
         from huggingface_hub import HfApi, hf_hub_download
 
@@ -24,8 +25,6 @@ def resolve_shards(source: str, limit: int = 0) -> list[Path]:
         if limit:
             names = names[:limit]
         files = [Path(hf_hub_download(source, name, repo_type="dataset")) for name in names]
-    if limit and not path.exists():
-        files = files[:limit]
     return files
 
 

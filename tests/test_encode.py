@@ -107,3 +107,28 @@ def test_record_without_pv_has_no_policy_target():
     )
     assert record["policy_prob"][0] == 0
     assert record["moves_left"] == 255
+
+
+def test_non_promotion_record_marks_promo_unknown():
+    record = record_from_eval(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        cp=0,
+        mate=None,
+        pv_uci="e2e4",
+    )
+    assert record["promo"] == 255
+
+
+def test_promotion_record_marks_piece():
+    record = record_from_eval("8/P7/8/8/8/8/8/K6k w - - 0 1", cp=0, mate=None, pv_uci="a7a8q")
+    assert record["promo"] == 0
+
+
+def test_pv_stops_after_six_plies():
+    record = record_from_eval(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        cp=0,
+        mate=None,
+        pv_uci="e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5c6 d7c6",
+    )
+    assert record["pv"][5] == chess.A7 * 64 + chess.A6

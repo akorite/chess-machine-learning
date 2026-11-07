@@ -16,7 +16,11 @@ class EngineSpec:
     def open(self, timeout: float = 30.0) -> chess.engine.SimpleEngine:
         engine = chess.engine.SimpleEngine.popen_uci(self.path, timeout=timeout)
         if self.options:
-            engine.configure(dict(self.options))
+            try:
+                validate_rung(engine, dict(self.options))
+            except Exception:
+                engine.quit()
+                raise
         return engine
 
 

@@ -11,14 +11,16 @@ import torch
 from torch import nn
 
 from ..config import TrainConfig
-from ..data.encode import MOVES_LEFT_UNKNOWN, planes_from_bits
+from ..data.encode import MOVES_LEFT_UNKNOWN, planes_from_bits_batch
 
 LOSS_WEIGHTS = {"policy": 1.0, "promo": 0.2, "wdl": 1.0, "pv": 0.5, "moves_left": 0.1}
 PV_PLIES = 6
 
 
 def batch_from_records(records: Sequence[np.ndarray]) -> dict[str, torch.Tensor]:
-    planes = np.stack([planes_from_bits(r["pieces"], r["meta"]) for r in records]).astype(np.float32)
+    planes = planes_from_bits_batch(
+        np.stack([r["pieces"] for r in records]), np.stack([r["meta"] for r in records])
+    ).astype(np.float32)
     policy_idx = np.stack([r["policy"] for r in records]).astype(np.int64)
     policy_prob = np.stack([r["policy_prob"] for r in records]).astype(np.float32) / 65535.0
     pv = np.stack([r["pv"] for r in records]).astype(np.int64)

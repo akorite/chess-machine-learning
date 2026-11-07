@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def tiny_model():
-    return Student(Preset("tiny", d_model=32, n_layers=1, n_heads=4, stem_channels=8, stem_blocks=1))
+    return Student(Preset(d_model=32, n_layers=1, n_heads=4, stem_channels=8, stem_blocks=1))
 
 
 class ScriptedModel(nn.Module):
@@ -144,3 +144,47 @@ def test_uci_handshake_and_legal_move():
     assert "readyok" in output
     best = next(line for line in output.splitlines() if line.startswith("bestmove")).split()[1]
     assert chess.Move.from_uci(best) in chess.Board().legal_moves
+
+
+def test_search_spends_more_than_the_candidate_cap():
+    result = search(tiny_model(), chess.Board(), SearchConfig(simulations=40), np.random.default_rng(1))
+    assert result.simulations > 16
+
+
+class EntropyModel(ScriptedModel):
+    def __init__(self, move, uncertain):
+        super().__init__(move)
+        self.uncertain = uncertain
+
+    def forward(self, planes):
+        outputs = super().forward(planes)
+        if self.uncertain:
+            outputs["wdl"] = torch.zeros(planes.shape[0], 3)
+        return outputs
+
+
+def test_uncertain_position_spends_more_simulations():
+    board = chess.Board()
+    certain = search(EntropyModel(chess.Move.from_uci("e2e4"), False), board, SearchConfig(simulations=40), np.random.default_rng(2))
+    uncertain = search(EntropyModel(chess.Move.from_uci("e2e4"), True), board, SearchConfig(simulations=40), np.random.default_rng(2))
+    assert uncertain.simulations > certain.simulations
+
+
+def test_setoption_changes_simulation_budget():
+    engine = ModelEngine(tiny_model(), simulations=4)
+    engine._setoption(["setoption", "name", "Simulations", "value", "9"])
+    assert engine.simulations == 9
+
+
+class FakeTablebase:
+    def probe_wdl(self, board):
+        return 2 if board.turn == chess.WHITE else -2
+
+    def probe_dtz(self, board):
+        return 1 if board.turn == chess.WHITE else 10
+
+
+def test_tablebase_prefers_smaller_dtz_among_wins():
+    board = chess.Board("8/8/8/8/8/8/8/KQ5k w - - 0 1")
+    move = tablebase_move(board, FakeTablebase())
+    assert move is not None and board.is_legal(move)

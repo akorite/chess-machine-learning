@@ -30,19 +30,24 @@ def value_from_score(score: chess.engine.PovScore, turn: chess.Color) -> float:
     return 2.0 / (1.0 + math.exp(-cp / 300.0)) - 1.0
 
 
-def policy_from_scores(infos: list[chess.engine.InfoDict], temperature: float = 120.0) -> dict[chess.Move, float]:
-    scores: dict[chess.Move, float] = {}
+def policy_from_scores(
+    infos: list[chess.engine.InfoDict], turn: chess.Color = chess.WHITE, temperature: float = 120.0
+) -> dict[chess.Move, float]:
+    raw: dict[chess.Move, float] = {}
     for info in infos:
         pv = info.get("pv") or ()
         score = info.get("score")
         if not pv or score is None:
             continue
-        cp = score.white().score(mate_score=100_000) or 0
-        scores[pv[0]] = math.exp(cp / temperature)
-    total = sum(scores.values())
-    if total <= 0:
+        pov = score.pov(turn)
+        cp = pov.score(mate_score=100_000) or 0
+        raw[pv[0]] = max(-1000.0, min(1000.0, cp)) / temperature
+    if not raw:
         return {}
-    return {move: weight / total for move, weight in scores.items()}
+    peak = max(raw.values())
+    weights = {move: math.exp(value - peak) for move, value in raw.items()}
+    total = sum(weights.values())
+    return {move: weight / total for move, weight in weights.items()}
 
 
 class UciOracle:
@@ -87,7 +92,7 @@ class Lc0Oracle(UciOracle):
         assert self.engine is not None, "oracle not open"
         infos = self.engine.analyse(board, chess.engine.Limit(nodes=self.nodes), multipv=self.multipv)
         infos = infos if isinstance(infos, list) else [infos]
-        policy = policy_from_scores(infos)
+        policy = policy_from_scores(infos, board.turn)
         best = infos[0]
         pv = tuple(best.get("pv") or ())
         value = value_from_score(best["score"], board.turn) if best.get("score") else 0.0
@@ -109,7 +114,7 @@ class StockfishOracle(UciOracle):
         assert self.engine is not None, "oracle not open"
         infos = self.engine.analyse(board, chess.engine.Limit(depth=self.depth), multipv=self.multipv)
         infos = infos if isinstance(infos, list) else [infos]
-        policy = policy_from_scores(infos)
+        policy = policy_from_scores(infos, board.turn)
         best = infos[0]
         pv = tuple(best.get("pv") or ())
         value = value_from_score(best["score"], board.turn) if best.get("score") else 0.0
