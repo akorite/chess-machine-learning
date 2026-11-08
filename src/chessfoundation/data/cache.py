@@ -133,12 +133,15 @@ class ShardDataset:
         start_batch: int = 0,
         batches: int = 0,
         limit: int = 0,
+        shard_batches: int = 8,
     ):
         """Batches in shuffled shard order, gathered inside one shard at a time.
 
-        A 100M-record corpus is far larger than page cache, so a globally random
-        gather turns every batch into reads across every shard file. Streaming
-        shard by shard keeps each batch inside one already-open mapping.
+        A batch stays inside one mapping (a corpus larger than page cache makes a
+        globally random gather read every shard per batch), while taking only
+        `shard_batches` from each shard before moving on: a mixed-source corpus
+        otherwise hands a short run nothing but one source, and a batch drawn
+        from a value-only source carries no policy signal.
         """
         produced = 0
         skipped = 0
@@ -149,7 +152,9 @@ class ShardDataset:
             for shard_pos in order:
                 shard = self.shards[int(shard_pos)]
                 indices = permutation(len(shard), seed, epoch * 7919 + int(shard_pos))
-                for start in range(0, len(indices) - batch_size + 1, batch_size):
+                starts = range(0, len(indices) - batch_size + 1, batch_size)
+                taken = 0
+                for start in starts:
                     if limit and rows >= limit:
                         return
                     if skipped < start_batch:
@@ -158,8 +163,11 @@ class ShardDataset:
                     yield np.asarray(shard[indices[start : start + batch_size]])
                     produced += 1
                     rows += batch_size
+                    taken += 1
                     if batches and produced >= batches:
                         return
+                    if taken >= shard_batches:
+                        break
             epoch += 1
 
     def __getitem__(self, index: int) -> np.ndarray:

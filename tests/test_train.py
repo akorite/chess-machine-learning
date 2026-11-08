@@ -199,3 +199,14 @@ def test_stream_respects_the_training_row_limit(tmp_path):
     limit = len(data) - 16
     rows = sum(len(frame) for frame in dataset.stream(8, seed=0, limit=limit))
     assert rows <= limit
+
+
+def test_stream_interleaves_shards(tmp_path):
+    from chessfoundation.data import cache
+
+    for index in range(4):
+        cache.write_shard(tmp_path / f"shard-{index:05d}.bin", varied_dataset())
+        cache.write_manifest(tmp_path, {"records": len(varied_dataset())})
+    dataset = cache.ShardDataset(tmp_path)
+    sources = [frame["policy"][0][0] for frame in dataset.stream(8, seed=0, batches=8, shard_batches=2)]
+    assert len(sources) == 8
