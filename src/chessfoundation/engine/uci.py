@@ -40,6 +40,3 @@ def validate_rung(engine: chess.engine.SimpleEngine, options: dict[str, object])
             raise ValueError(f"engine does not expose required option {name!r}")
     engine.configure(dict(options))
 
-
-def nodes_options(nodes: int, threads: int = 1, hash_mb: int = 16) -> dict[str, object]:
-    return {"Nodes": int(nodes), "Threads": int(threads), "Hash": int(hash_mb)}

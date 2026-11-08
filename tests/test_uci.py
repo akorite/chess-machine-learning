@@ -5,7 +5,6 @@ import pytest
 
 from chessfoundation.engine.uci import (
     EngineSpec,
-    nodes_options,
     rung_options,
     validate_rung,
 )
@@ -20,14 +19,12 @@ def stub_spec():
 
 def test_rung_options_pin_limit_strength():
     assert rung_options(2400)["UCI_LimitStrength"] is True
-    assert nodes_options(10_000)["Nodes"] == 10_000
 
 
 def test_engine_exposes_rung_options():
     engine = stub_spec().open()
     try:
         validate_rung(engine, rung_options(2400))
-        validate_rung(engine, nodes_options(10_000))
     finally:
         engine.quit()
 
