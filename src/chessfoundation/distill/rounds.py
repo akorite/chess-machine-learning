@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -66,10 +67,20 @@ def label_record(board: chess.Board, value: float, policy: dict[chess.Move, floa
 
 
 def label_positions(positions: list[chess.Board], analyse: Callable[[chess.Board], tuple[float, dict[chess.Move, float]]]) -> list[np.ndarray]:
+    from ..teacher.lc0_oracle import OracleError
+
     records = []
+    skipped = 0
     for board in positions:
-        value, policy = analyse(board)
+        try:
+            value, policy = analyse(board)
+        except OracleError as exc:
+            skipped += 1
+            print(f"warning: label skipped: {exc}", file=sys.stderr)
+            continue
         records.append(label_record(board, value, policy))
+    if skipped:
+        print(f"warning: labeling skipped {skipped}/{len(positions)} positions (oracle faults)", file=sys.stderr)
     return records
 
 

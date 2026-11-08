@@ -25,6 +25,7 @@ class MatchConfig:
     games: int = 400
     movetime_ms: int = 50
     openings: tuple[str, ...] = ()
+    nodes: int | None = None  # per-move node limit pinning the `black` spec (rung opponent)
     pgn_path: str = ""
 
 
@@ -82,7 +83,7 @@ def fastchess_command(cfg: MatchConfig, binary: str = "fastchess") -> list[str]:
         "tc=inf",
         "-each",
         "timemargin=0",
-        f"st={cfg.movetime_ms}",
+        f"st={cfg.movetime_ms / 1000.0:g}",
         "-games",
         str(cfg.games),
         "-rounds",
@@ -100,6 +101,44 @@ def parse_fastchess(text: str) -> tuple[int, int, int]:
     return tuple(int(group) for group in match.groups())  # type: ignore[return-value]
 
 
+def _info_comment(info: object) -> str:
+    """Render an engine info dict as a PGN comment; '' when nothing was reported."""
+    if not info or not isinstance(info, dict):
+        return ""
+    parts = []
+    if info.get("nodes") is not None:
+        parts.append(f"nodes {info['nodes']}")
+    if info.get("depth") is not None:
+        parts.append(f"depth {info['depth']}")
+    return "info " + " ".join(parts) if parts else ""
+
+
+def play_game(
+    engine_by_colour: dict[chess.Color, chess.engine.SimpleEngine],
+    board: chess.Board,
+    limits: dict,
+    comments: list[str] | None = None,
+) -> tuple[chess.Color | None, str | None]:
+    """Play one game; engine faults forfeit the side to move, never the match."""
+    try:
+        while not board.is_game_over(claim_draw=True):
+            engine = engine_by_colour[board.turn]
+            try:
+                result = engine.play(board, limits[engine], info=chess.engine.INFO_ALL)
+            except TypeError:
+                result = engine.play(board, limits[engine])
+            move = result.move
+            if move is None:
+                return (not board.turn), "stalled"
+            board.push(move)
+            if comments is not None:
+                comments.append(_info_comment(result.info))
+    except Exception as exc:  # noqa: BLE001 - a dead engine forfeits this game only
+        return (not board.turn), type(exc).__name__
+    outcome = board.outcome(claim_draw=True)
+    return (outcome.winner if outcome is not None else None), None
+
+
 def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
     """Smoke-grade runner with a fixed per-move budget.
 
@@ -110,6 +149,14 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
     path = Path(cfg.pgn_path or "match.pgn")
     path.parent.mkdir(parents=True, exist_ok=True)
     engines = {chess.WHITE: cfg.white.open(), chess.BLACK: cfg.black.open()}
+    limits = {
+        engines[chess.WHITE]: chess.engine.Limit(time=cfg.movetime_ms / 1000.0),
+        engines[chess.BLACK]: (
+            chess.engine.Limit(nodes=cfg.nodes)
+            if cfg.nodes is not None
+            else chess.engine.Limit(time=cfg.movetime_ms / 1000.0)
+        ),
+    }
     wins = draws = losses = 0
     games: list[str] = []
     try:
@@ -124,19 +171,8 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
                 if spec_colour == chess.WHITE
                 else {chess.WHITE: engines[chess.BLACK], chess.BLACK: engines[chess.WHITE]}
             )
-            stalled = False
-            while not board.is_game_over(claim_draw=True):
-                engine = engine_by_colour[board.turn]
-                move = engine.play(board, chess.engine.Limit(time=cfg.movetime_ms / 1000.0)).move
-                if move is None:
-                    stalled = True
-                    break
-                board.push(move)
-            outcome = board.outcome(claim_draw=True)
-            if stalled:
-                winner = chess.BLACK if board.turn == chess.WHITE else chess.WHITE
-            else:
-                winner = outcome.winner if outcome is not None else None
+            comments: list[str] = [""] * board.ply()
+            winner, fault = play_game(engine_by_colour, board, limits, comments)
             if winner is None:
                 draws += 1
             elif winner == spec_colour:
@@ -144,8 +180,13 @@ def run_local(cfg: MatchConfig, seed: int = 0) -> MatchResult:
             else:
                 losses += 1
             game = chess.pgn.Game.from_board(board)
+            for node, comment in zip(game.mainline(), comments):
+                if comment:
+                    node.comment = comment
             game.headers["White"] = "white" if spec_colour == chess.WHITE else "black"
             game.headers["Black"] = "black" if spec_colour == chess.WHITE else "white"
+            if fault:
+                game.headers["Termination"] = f"fault: {fault}"
             games.append(str(game))
             path.write_text("\n\n".join(games))
     finally:

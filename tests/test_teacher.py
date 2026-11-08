@@ -1,4 +1,5 @@
 import math
+import time
 
 import chess
 import chess.engine
@@ -129,3 +130,79 @@ def test_oracle_options_exclude_managed_multipv(monkeypatch):
 
     assert captured == [{"WeightsFile": "w.pb.gz"}]  # empty dict skips configure entirely
     assert all("MultiPV" not in opts for opts in captured)
+
+
+def test_oracle_timeout_raises_typed_error():
+    from chessfoundation.teacher.lc0_oracle import Lc0Oracle, OracleTimeout
+
+    class Stalled:
+        def analyse(self, board, limit, multipv=1):
+            time.sleep(1.0)
+
+    oracle = Lc0Oracle(timeout_s=0.05)
+    oracle.engine = Stalled()
+    with pytest.raises(OracleTimeout):
+        oracle.analyse(chess.Board())
+
+
+def test_oracle_empty_infos_raises_with_fen():
+    from chessfoundation.teacher.lc0_oracle import OracleError, StockfishOracle
+
+    class Empty:
+        def analyse(self, board, limit, multipv=1):
+            return []
+
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+    oracle = StockfishOracle()
+    oracle.engine = Empty()
+    with pytest.raises(OracleError, match=board.fen()):
+        oracle.analyse(board)
+
+
+def test_oracle_missing_score_raises_with_fen():
+    from chessfoundation.teacher.lc0_oracle import Lc0Oracle, OracleError
+
+    class Scoreless:
+        def analyse(self, board, limit, multipv=1):
+            return [{"pv": [chess.Move.from_uci("e2e4")]}]
+
+    board = chess.Board()
+    oracle = Lc0Oracle()
+    oracle.engine = Scoreless()
+    with pytest.raises(OracleError, match=board.fen()):
+        oracle.analyse(board)
+
+
+def test_oracle_parses_valid_infos():
+    from chessfoundation.teacher.lc0_oracle import StockfishOracle
+
+    score = chess.engine.PovScore(chess.engine.Cp(120), chess.WHITE)
+
+    class Healthy:
+        def analyse(self, board, limit, multipv=1):
+            return [{"pv": [chess.Move.from_uci("e2e4")], "score": score, "nodes": 500}]
+
+    oracle = StockfishOracle()
+    oracle.engine = Healthy()
+    result = oracle.analyse(chess.Board())
+    assert result.move == chess.Move.from_uci("e2e4")
+    assert result.value > 0
+    assert result.nodes == 500
+
+
+def test_label_positions_skips_oracle_failures(capsys):
+    from chessfoundation.distill.rounds import label_positions
+    from chessfoundation.teacher.lc0_oracle import OracleError
+
+    calls = {"n": 0}
+
+    def analyse(board):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OracleError(f"oracle stalled: {board.fen()}")
+        return 0.25, {next(iter(board.legal_moves)): 1.0}
+
+    records = label_positions([chess.Board(), chess.Board(), chess.Board()], analyse)
+    assert len(records) == 2
+    assert calls["n"] == 3
+    assert "skipped" in capsys.readouterr().err

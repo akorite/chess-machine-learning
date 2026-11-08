@@ -1,5 +1,7 @@
 import math
 
+import chess
+import chess.engine
 import pytest
 
 from chessfoundation.eval.tournament import (
@@ -52,3 +54,34 @@ def test_parse_fastchess_rejects_unknown_output():
 def test_score_interval_needs_games():
     with pytest.raises(ValueError):
         score_interval(0, 0, 0)
+
+
+def test_run_local_records_forfeits_when_engine_dies(tmp_path, monkeypatch):
+    from chessfoundation.engine.uci import EngineSpec
+    from chessfoundation.eval.tournament import MatchConfig, run_local
+
+    class DiesOnThirdGame:
+        def __init__(self):
+            self.games_seen = 0
+
+        def play(self, board, limit):
+            if board.ply() == 0:
+                self.games_seen += 1
+            if self.games_seen >= 3:
+                raise chess.engine.EngineTerminatedError("engine process died")
+            return chess.engine.PlayResult(next(iter(board.legal_moves)), None)
+
+        def quit(self):
+            pass
+
+    spec = EngineSpec(path="unused")
+    dying = DiesOnThirdGame()
+    cfg = MatchConfig(white=spec, black=spec, games=4, pgn_path=str(tmp_path / "m.pgn"))
+
+    monkeypatch.setattr(EngineSpec, "open", lambda self: dying)
+    result = run_local(cfg)
+
+    text = (tmp_path / "m.pgn").read_text()
+    assert result.games == 4
+    assert text.count('Termination "fault: EngineTerminatedError"') == 2
+    assert result.draws == 2  # games 1-2 completed; 3-4 forfeit
