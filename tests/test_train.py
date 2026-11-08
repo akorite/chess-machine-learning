@@ -186,3 +186,16 @@ def test_shard_stream_is_deterministic_and_covers_the_shard(tmp_path):
 
     rows = sorted(row.tobytes() for frame in dataset.stream(8, seed=3, batches=len(data) // 8) for row in frame)
     assert rows == sorted(row.tobytes() for row in data)
+
+
+def test_stream_respects_the_training_row_limit(tmp_path):
+    from chessfoundation.data import cache
+
+    data = varied_dataset()
+    cache.write_shard(tmp_path / "shard-00000.bin", data)
+    cache.write_manifest(tmp_path, {"records": len(data)})
+    dataset = cache.ShardDataset(tmp_path)
+
+    limit = len(data) - 16
+    rows = sum(len(frame) for frame in dataset.stream(8, seed=0, limit=limit))
+    assert rows <= limit

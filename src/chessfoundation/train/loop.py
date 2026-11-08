@@ -219,7 +219,13 @@ def batches(
                 indices = batch_indices(n, batch_size, seed, start_step + offset)
                 yield batch_frame(dataset, indices)
             return
-        yield from stream(batch_size, seed, start_batch=start_step, batches=steps)
+        yield from stream(
+            batch_size,
+            seed,
+            start_batch=start_step,
+            batches=steps,
+            limit=training_rows(len(dataset), batch_size),
+        )
 
     def produce() -> None:
         try:
