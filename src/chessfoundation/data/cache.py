@@ -126,6 +126,31 @@ class ShardDataset:
     def __len__(self) -> int:
         return int(self.ends[-1])
 
+    def stream(self, batch_size: int, seed: int, start_batch: int = 0, batches: int = 0):
+        """Batches in shuffled shard order, gathered inside one shard at a time.
+
+        A 100M-record corpus is far larger than page cache, so a globally random
+        gather turns every batch into reads across every shard file. Streaming
+        shard by shard keeps each batch inside one already-open mapping.
+        """
+        produced = 0
+        skipped = 0
+        epoch = 0
+        while not batches or produced < batches:
+            order = permutation(len(self.shards), seed, epoch)
+            for shard_pos in order:
+                shard = self.shards[int(shard_pos)]
+                indices = permutation(len(shard), seed, epoch * 7919 + int(shard_pos))
+                for start in range(0, len(indices) - batch_size + 1, batch_size):
+                    if skipped < start_batch:
+                        skipped += 1
+                        continue
+                    yield np.asarray(shard[indices[start : start + batch_size]])
+                    produced += 1
+                    if batches and produced >= batches:
+                        return
+            epoch += 1
+
     def __getitem__(self, index: int) -> np.ndarray:
         shard = int(np.searchsorted(self.ends, index, side="right") - 1)
         return np.asarray(self.shards[shard][index - int(self.ends[shard])])

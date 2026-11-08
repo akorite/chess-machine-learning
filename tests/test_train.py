@@ -167,18 +167,22 @@ def test_resume_replays_the_same_batch_order():
 
 
 
-def test_batches_run_through_shard_cache(tmp_path):
+def test_shard_stream_is_deterministic_and_covers_the_shard(tmp_path):
     from chessfoundation.data import cache
 
     data = varied_dataset()
     cache.write_shard(tmp_path / "shard-00000.bin", data)
     cache.write_manifest(tmp_path, {"records": len(data)})
     dataset = cache.ShardDataset(tmp_path)
-    rows = loop.training_rows(len(data), 8)
-    expected = [
-        loop.batch_from_records(loop.batch_frame(data, loop.batch_indices(rows, 8, 0, s)))
-        for s in range(3)
-    ]
-    for eager, prefetched in zip(expected, loop.batches(dataset, 8, seed=0, start_step=0, steps=3)):
-        for key, value in eager.items():
-            assert torch.equal(value, prefetched[key])
+
+    def collect(start: int, count: int) -> list[bytes]:
+        return [frame.tobytes() for frame in dataset.stream(8, seed=3, start_batch=start, batches=count)]
+
+    first = collect(0, 2)
+    assert first == collect(0, 2)
+    assert first != collect(1, 2)
+    resumed = collect(1, 1)
+    assert resumed[0] == first[1]
+
+    rows = sorted(row.tobytes() for frame in dataset.stream(8, seed=3, batches=len(data) // 8) for row in frame)
+    assert rows == sorted(row.tobytes() for row in data)

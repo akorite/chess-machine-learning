@@ -210,12 +210,21 @@ def batches(
                 continue
         return False
 
-    def produce() -> None:
-        try:
+    stream = getattr(dataset, "stream", None)
+
+    def frames():
+        if stream is None:
             for offset in range(steps):
                 n = training_rows(len(dataset), batch_size)
                 indices = batch_indices(n, batch_size, seed, start_step + offset)
-                if not put(batch_from_records(batch_frame(dataset, indices))):
+                yield batch_frame(dataset, indices)
+            return
+        yield from stream(batch_size, seed, start_batch=start_step, batches=steps)
+
+    def produce() -> None:
+        try:
+            for frame in frames():
+                if not put(batch_from_records(frame)):
                     return
             put(None)
         except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
