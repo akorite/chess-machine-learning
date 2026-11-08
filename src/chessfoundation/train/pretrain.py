@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -21,6 +22,14 @@ from .checkpoint import load, save
 from .gates import check_stage_source, project_stage
 
 STAGES = ("ssl", "value", "deep")
+SAVE_WINDOW = 15 * 60.0  # seconds of training at most between checkpoints
+PROBE_STEPS = 32  # first chunk that measures the real step rate
+
+
+def write_metrics(save_path: str | Path, metrics: dict[str, float]) -> Path:
+    path = Path(save_path).with_suffix(".metrics.json")
+    path.write_text(json.dumps(metrics, indent=2))
+    return path
 
 
 class MaskedPieceDecoder(nn.Module):
@@ -105,18 +114,30 @@ def run_stage(
         check_stage_source(stage, counts)
     dataset = ShardDataset(data_dir)
     if stage == "ssl":
-        return run_ssl(model, dataset, cfg, steps, device, optimizer, start_step, save_path, save_every)
+        metrics = run_ssl(
+            model, dataset, cfg, steps, device, optimizer, start_step, save_path, save_every
+        )
+        if save_path:
+            metrics.update(loop.evaluate(model, dataset, cfg, device=device))
+            write_metrics(save_path, metrics)
+        return metrics
     if optimizer is None:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     done = 0
     metrics: dict[str, float] = {}
+    started = time.monotonic()
+    plan = save_every or (PROBE_STEPS if save_path else steps)
     while done < steps:
-        chunk = min(save_every or (steps - done), steps - done)
+        chunk = min(plan, steps - done)
         metrics = loop.train(model, dataset, cfg, chunk, device, optimizer, start_step + done)
         done += chunk
+        metrics.update(loop.evaluate(model, dataset, cfg, device=device))
+        metrics["step"] = float(start_step + done)
         if save_path:
             save(save_path, model, optimizer, step=start_step + done, meta={"stage": stage})
-    metrics["step"] = float(start_step + done)
+            write_metrics(save_path, metrics)
+            if not save_every:  # probe chunk just measured the rate; keep the gap under the window
+                plan = max(1, int(SAVE_WINDOW * done / max(time.monotonic() - started, 1e-9)))
     return metrics
 
 
@@ -170,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     print(metrics)
     if args.out:
         save(args.out, model, optimizer, step=start_step + args.steps, meta={"stage": args.stage, "metrics": metrics})
-        Path(args.out).with_suffix(".metrics.json").write_text(json.dumps(metrics, indent=2))
+        write_metrics(args.out, metrics)
     return 0
 
 

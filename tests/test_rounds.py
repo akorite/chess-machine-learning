@@ -188,11 +188,12 @@ def test_prior_kl_zero_when_student_matches_teacher_prior():
         "wdl": torch.zeros(2, 3),
         "pv": torch.zeros(2, 6, 4096),
         "moves_left": torch.zeros(2),
+        "value": torch.zeros(2),
     }
     _, metrics = compute_loss(outputs, batch, prior_kl_weight=0.05)
     assert metrics["prior_kl"] == pytest.approx(0.0, abs=1e-5)
     outputs["policy"] = outputs["policy"].clone()
-    outputs["policy"][:, 700] = 4.0
+    outputs["policy"][:, int(batch["policy_idx"][0, 0])] = 4.0
     _, diverged = compute_loss(outputs, batch, prior_kl_weight=0.05)
     assert diverged["prior_kl"] > 0.0
 

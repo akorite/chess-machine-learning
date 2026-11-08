@@ -12,7 +12,10 @@ import torch
 from torch import nn
 
 from ..data.encode import (
+    POLICY_ACTIONS,
     board_planes,
+    canonical_index,
+    canonical_planes,
     legal_masks,
     move_index,
     promo_index,
@@ -59,14 +62,26 @@ class _Node:
         return self.value_sum / self.visits if self.visits else 0.0
 
 
+_MOVE_MIRROR = canonical_index(np.arange(POLICY_ACTIONS))
+
+
 def _evaluate(model: nn.Module, boards: list[chess.Board], device: str, bf16: bool = False):
+    # The network sees every board from the mover's side; its policy indices are
+    # therefore canonical (Black-to-move positions mirrored) and map back here.
     planes = torch.from_numpy(
-        np.stack([board_planes(board) for board in boards]).astype(np.float32)
+        np.stack(
+            [
+                canonical_planes(board_planes(board), board.turn == chess.BLACK)
+                for board in boards
+            ]
+        ).astype(np.float32)
     ).to(device)
     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=bf16 and device == "cuda"):
         outputs = model(planes)
     masks = np.stack([legal_masks(board)[0] for board in boards])
     logits = outputs["policy"].detach().cpu().numpy().astype(np.float64)
+    black = np.array([board.turn == chess.BLACK for board in boards])
+    logits[black] = logits[black][:, _MOVE_MIRROR]
     logits = np.where(masks, logits, -np.inf)
     wdl = outputs["wdl"].softmax(-1).detach().cpu().numpy()
     value = (wdl * np.array([-1.0, 0.0, 1.0])).sum(-1)

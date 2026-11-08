@@ -1,4 +1,4 @@
-"""Smolgen attention: board-wide bias learned from the token set."""
+"""Smolgen attention: per-square bias learned from the token set."""
 
 from __future__ import annotations
 
@@ -39,10 +39,15 @@ class SmolgenAttention(nn.Module):
         k = k.reshape(batch, tokens, self.heads, head_dim).transpose(1, 2)
         v = v.reshape(batch, tokens, self.heads, head_dim).transpose(1, 2)
 
-        gen = self.gen(x.mean(dim=1)).reshape(batch, self.heads, self.gen_size)
+        gen = (
+            self.gen(x)
+            .reshape(batch, tokens, self.heads, self.gen_size)
+            .transpose(1, 2)
+        )
+        # Each square expands its own gen vector, so the bias is per-square, not board-wide.
         left = self.gen_left(gen)
         right = self.gen_right(gen)
-        bias = torch.einsum("bhl,bhr->bhlr", left, right) / math.sqrt(self.gen_size)
+        bias = torch.matmul(left, right.transpose(-2, -1)) / math.sqrt(self.gen_size)
 
         attended = torch.nn.functional.scaled_dot_product_attention(
             q,

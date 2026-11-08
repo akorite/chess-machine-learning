@@ -13,6 +13,8 @@ WDL_UNKNOWN = 255
 MOVES_LEFT_UNKNOWN = 255
 DRAW_CP = 50
 POLICY_PROB_MAX = 65535
+CP_MAX = 2000
+CP_UNKNOWN = -32768
 
 RECORD_DTYPE = np.dtype(
     [
@@ -22,6 +24,7 @@ RECORD_DTYPE = np.dtype(
         ("policy_prob", "<u2", (8,)),
         ("promo", "u1"),
         ("wdl", "u1"),
+        ("cp", "<i2"),
         ("moves_left", "u1"),
         ("pv", "<u2", (6,)),
     ]
@@ -98,6 +101,7 @@ def record_from_board(board: chess.Board) -> np.ndarray:
     record["meta"] = _meta(board)
     record["promo"] = 255
     record["wdl"] = WDL_UNKNOWN
+    record["cp"] = CP_UNKNOWN
     record["moves_left"] = MOVES_LEFT_UNKNOWN
     return record
 
@@ -133,6 +137,50 @@ def legal_masks(board: chess.Board) -> tuple[np.ndarray, np.ndarray]:
     return policy, promo
 
 
+def canonical_planes(planes: np.ndarray, black_to_move: bool | np.ndarray) -> np.ndarray:
+    """Planes seen from the mover: Black-to-move boards swap colours and mirror ranks.
+
+    Works on ``(PLANES, 8, 8)`` and ``(B, PLANES, 8, 8)``; ``black_to_move`` may be a
+    per-row array. The en-passant square and castling planes mirror with the board and
+    plane 17 becomes all-ones, so the mover is always "White" to the network.
+    """
+    black = np.asarray(black_to_move, dtype=bool)
+    mirrored = np.ascontiguousarray(
+        np.flip(
+            np.concatenate(
+                (
+                    planes[..., 6:12, :, :],
+                    planes[..., 0:6, :, :],
+                    planes[..., 14:16, :, :],
+                    planes[..., 12:14, :, :],
+                    planes[..., 16:, :, :],
+                ),
+                axis=-3,
+            ),
+            axis=-2,
+        )
+    )
+    mirrored[..., 17, :, :] = 1
+    if black.ndim == 0:
+        return mirrored if bool(black) else planes
+    return np.where(black[:, None, None, None], mirrored, planes)
+
+
+def canonical_index(index: int | np.ndarray) -> int | np.ndarray:
+    """Mirror a move index's squares between absolute names and the mover's view.
+
+    Squares are ``rank * 8 + file``, so mirroring a rank is ``square ^ 56``. The map is
+    its own inverse.
+    """
+    from_square, to_square = divmod(index, 64)
+    return ((from_square ^ 56) << 6) | (to_square ^ 56)
+
+
+def canonical_move(move: chess.Move) -> chess.Move:
+    """The mirrored ``chess.Move``; promotion piece is colour-neutral and kept."""
+    return chess.Move(move.from_square ^ 56, move.to_square ^ 56, move.promotion)
+
+
 def wdl_from_cp(cp: int, white_to_move: bool, threshold: int = DRAW_CP) -> int:
     stm = cp if white_to_move else -cp
     if stm > threshold:
@@ -144,6 +192,20 @@ def wdl_from_cp(cp: int, white_to_move: bool, threshold: int = DRAW_CP) -> int:
 
 def wdl_from_mate(mate: int, white_to_move: bool) -> int:
     return 2 if (mate > 0) == white_to_move else 0
+
+
+def win_prob(cp: int, white_to_move: bool, blurred: int = 0) -> float:
+    """Side-to-move win probability; `blurred` averages the eval over ±cp of noise."""
+    if cp == CP_UNKNOWN:
+        raise ValueError("cp is unknown; mask unlabeled records from the value loss")
+    stm = int(cp) if white_to_move else -int(cp)
+    if blurred:
+        return 0.5 * (win_prob(stm - blurred, True) + win_prob(stm + blurred, True))
+    if stm >= CP_MAX:
+        return 1.0
+    if stm <= -CP_MAX:
+        return 0.0
+    return 1 / (1 + 10 ** (-stm / 400))
 
 
 def set_best_move(record: np.ndarray, move: chess.Move, prob: int = POLICY_PROB_MAX) -> None:
@@ -165,8 +227,10 @@ def record_from_eval(
     white_to_move = board.turn == chess.WHITE
     if mate is not None:
         record["wdl"] = wdl_from_mate(mate, white_to_move)
+        record["cp"] = CP_MAX if mate > 0 else -CP_MAX
     elif cp is not None:
         record["wdl"] = wdl_from_cp(cp, white_to_move)
+        record["cp"] = max(-CP_MAX, min(CP_MAX, int(cp)))
     unknown = moves_left is None or int(moves_left) >= MOVES_LEFT_UNKNOWN
     record["moves_left"] = MOVES_LEFT_UNKNOWN if unknown else int(moves_left)
 

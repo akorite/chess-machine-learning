@@ -119,3 +119,146 @@ def test_qat_checkpoint_resumes_cleanly(tmp_path):
     ])
     assert rc == 0
     assert out.exists()
+
+
+def cached(tmp_path, n=40):
+    from chessfoundation.data import cache
+
+    array = records(n)
+    array["meta"][:, 2] = 1
+    array["cp"] = 100
+    cache.write_shard(tmp_path / "shard-00000.bin", array)
+    cache.write_manifest(tmp_path, {"records": n})
+    return tmp_path
+
+
+def metrics_of(path):
+    import json
+
+    return json.loads(path.with_suffix(".metrics.json").read_text())
+
+
+def test_five_step_run_writes_validation_metrics(tmp_path):
+    data = cached(tmp_path)
+    out = tmp_path / "run.pt"
+    rc = pretrain.main([
+        "--stage", "value",
+        "--data", str(data),
+        "--preset", "p6m",
+        "--steps", "5",
+        "--batch-size", "4",
+        "--out", str(out),
+    ])
+    assert rc == 0
+    metrics = metrics_of(out)
+    assert {"value_mae", "policy_top1", "wdl_accuracy", "loss", "policy"} <= set(metrics)
+    assert metrics["step"] == 5
+    assert np.isfinite(metrics["value_mae"])
+
+
+def test_save_every_two_over_five_steps_checkpoints_twice_then_finally(tmp_path, monkeypatch):
+    from chessfoundation.train import checkpoint
+
+    data = cached(tmp_path)
+    out = tmp_path / "run.pt"
+    steps: list[int] = []
+    real_save = checkpoint.save
+
+    def recording_save(path, model, optimizer=None, step=0, meta=None):
+        steps.append(step)
+        return real_save(path, model, optimizer, step, meta)
+
+    monkeypatch.setattr(pretrain, "save", recording_save)
+    pretrain.run_stage(
+        tiny_model(),
+        "value",
+        data,
+        TrainConfig(batch_size=4, lr=1e-3, max_steps=5),
+        5,
+        save_path=out,
+        save_every=2,
+    )
+    assert steps == [2, 4, 5]
+    assert metrics_of(out)["step"] == 5
+
+
+def test_derived_cadence_checkpoints_between_probe_and_end(tmp_path, monkeypatch):
+    from chessfoundation.train import checkpoint
+
+    data = cached(tmp_path)
+    out = tmp_path / "run.pt"
+    steps: list[int] = []
+    real_save = checkpoint.save
+
+    def recording_save(path, model, optimizer=None, step=0, meta=None):
+        steps.append(step)
+        return real_save(path, model, optimizer, step, meta)
+
+    monkeypatch.setattr(pretrain, "save", recording_save)
+    monkeypatch.setattr(pretrain, "SAVE_WINDOW", 0.001)
+    pretrain.run_stage(
+        tiny_model(),
+        "value",
+        data,
+        TrainConfig(batch_size=4, lr=1e-3, max_steps=40),
+        40,
+        save_path=out,
+    )
+    assert steps[0] == pretrain.PROBE_STEPS
+    assert steps[-1] == 40
+    assert len(steps) > 2
+
+
+def test_resume_continues_at_the_recorded_step_and_writes_metrics(tmp_path):
+    import torch
+
+    from chessfoundation.model.presets import build_student
+    from chessfoundation.train import checkpoint
+
+    data = cached(tmp_path)
+    mid = tmp_path / "mid.pt"
+    model = build_student("p6m")
+    cfg = TrainConfig(batch_size=4, lr=1e-3, max_steps=4)
+    pretrain.run_stage(
+        model,
+        "value",
+        data,
+        cfg,
+        2,
+        optimizer=torch.optim.AdamW(model.parameters(), lr=cfg.lr),
+        save_path=mid,
+        save_every=1,
+    )
+    assert checkpoint.load(mid, build_student("p6m"))["step"] == 2
+    assert metrics_of(mid)["step"] == 2
+
+    out = tmp_path / "resumed.pt"
+    rc = pretrain.main([
+        "--stage", "value",
+        "--data", str(data),
+        "--preset", "p6m",
+        "--steps", "2",
+        "--batch-size", "4",
+        "--resume", str(mid),
+        "--out", str(out),
+    ])
+    assert rc == 0
+    metrics = metrics_of(out)
+    assert metrics["step"] == 4
+    assert {"value_mae", "policy_top1", "wdl_accuracy"} <= set(metrics)
+
+
+def test_evaluate_is_deterministic_and_restores_train_mode(tmp_path):
+    from chessfoundation.data.cache import ShardDataset
+    from chessfoundation.train import loop
+
+    data = ShardDataset(cached(tmp_path))
+    model = tiny_model()
+    cfg = TrainConfig(batch_size=4)
+    first = loop.evaluate(model, data, cfg, max_batches=2)
+    second = loop.evaluate(model, data, cfg, max_batches=2)
+    assert first == second
+    assert 0.0 <= first["policy_top1"] <= 1.0
+    assert 0.0 <= first["wdl_accuracy"] <= 1.0
+    assert np.isfinite(first["value_mae"])
+    assert model.training

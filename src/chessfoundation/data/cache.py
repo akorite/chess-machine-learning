@@ -13,6 +13,11 @@ from .encode import RECORD_DTYPE
 MANIFEST = "manifest.json"
 
 
+def permutation(n: int, seed: int, epoch: int) -> np.ndarray:
+    """Shuffled index order for one epoch; identical arguments give identical order."""
+    return np.random.default_rng([seed, epoch]).permutation(n)
+
+
 def shard_paths(directory: str | Path) -> list[Path]:
     return sorted(Path(directory).glob("shard-*.bin"))
 
@@ -106,3 +111,16 @@ class ShardDataset:
     def __getitem__(self, index: int) -> np.ndarray:
         shard = int(np.searchsorted(self.ends, index, side="right") - 1)
         return np.asarray(self.shards[shard][index - int(self.ends[shard])])
+
+    def batch(self, indices: np.ndarray) -> np.ndarray:
+        """Gather many records at once, touching each shard with one slice."""
+        indices = np.asarray(indices, dtype=np.int64)
+        shard = np.searchsorted(self.ends, indices, side="right") - 1
+        order = np.argsort(shard, kind="stable")
+        cuts = np.searchsorted(shard[order], np.arange(len(self.shards) + 1))
+        out = np.empty(len(indices), dtype=RECORD_DTYPE)
+        for k, shard_data in enumerate(self.shards):
+            rows = order[cuts[k] : cuts[k + 1]]
+            if rows.size:
+                out[rows] = shard_data[indices[rows] - self.ends[k]]
+        return out

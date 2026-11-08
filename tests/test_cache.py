@@ -24,6 +24,24 @@ def test_shard_round_trip_and_indexing(tmp_path):
     assert dataset[4]["wdl"] == 1
 
 
+def test_batch_gathers_the_same_records_as_single_lookups(tmp_path):
+    cache.write_shard(tmp_path / "shard-00000.bin", records(3))
+    cache.write_shard(tmp_path / "shard-00001.bin", records(2))
+    cache.write_manifest(tmp_path, {"records": 5})
+    dataset = cache.ShardDataset(tmp_path)
+    indices = np.array([4, 0, 3, 1, 2, 4])
+    assert np.array_equal(dataset.batch(indices), np.stack([dataset[int(i)] for i in indices]))
+    assert len(dataset.batch(np.array([], dtype=np.int64))) == 0
+
+
+def test_permutation_is_seeded_and_covers_every_index():
+    first = cache.permutation(10, seed=7, epoch=0)
+    assert np.array_equal(first, cache.permutation(10, seed=7, epoch=0))
+    assert not np.array_equal(first, cache.permutation(10, seed=7, epoch=1))
+    assert not np.array_equal(first, cache.permutation(10, seed=8, epoch=0))
+    assert np.array_equal(np.sort(first), np.arange(10))
+
+
 def test_verify_accepts_intact_shards(tmp_path):
     cache.write_shard(tmp_path / "shard-00000.bin", records(4))
     cache.write_manifest(tmp_path, {"records": 4})

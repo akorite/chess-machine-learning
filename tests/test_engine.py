@@ -13,7 +13,7 @@ import torch
 from torch import nn
 
 from chessfoundation.config import Preset
-from chessfoundation.data.encode import POLICY_ACTIONS, PROMO_PIECES
+from chessfoundation.data.encode import POLICY_ACTIONS, PROMO_PIECES, canonical_move
 from chessfoundation.engine.book import probe_book
 from chessfoundation.engine.gumbel import (
     SearchConfig,
@@ -169,6 +169,23 @@ def test_search_handles_terminal_children():
     # mate-in-1: Qh5xf7#; one child ends the game — regression for _terminal_value(_Node).
     board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1")
     result = search(tiny_model(), board, SearchConfig(simulations=32), np.random.default_rng(4))
+    assert result.move in board.legal_moves
+
+
+def test_search_is_colour_equivariant():
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1")
+    mirrored = board.copy(stack=False)
+    mirrored.apply_mirror()
+    model = tiny_model()
+    cfg = SearchConfig(simulations=32)
+    first = search(model, board, cfg, np.random.default_rng(7)).move
+    second = search(model, mirrored, cfg, np.random.default_rng(7)).move
+    assert second == canonical_move(first)
+
+
+def test_best_move_is_legal_for_black_to_move():
+    board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
+    result = ModelEngine(tiny_model(), simulations=4).best_move(board)
     assert result.move in board.legal_moves
 
 

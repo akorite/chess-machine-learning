@@ -24,7 +24,7 @@ class Throughput:
 
 def measure(
     model: nn.Module,
-    batch_size: int = 16,
+    batch_size: int = 512,
     device: str | None = None,
     warmup: int = 2,
     steps: int = 5,
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--preset", default="p20m", choices=["p6m", "p20m"])
     parser.add_argument("--accelerator", default="L4", choices=sorted(CU_PER_HOUR))
     parser.add_argument("--positions", type=int, default=100_000_000)
-    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--batch-size", type=int, default=512)
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)

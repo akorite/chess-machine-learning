@@ -3,34 +3,62 @@
 from __future__ import annotations
 
 import math
+import queue
+import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import numpy as np
 import torch
 from torch import nn
 
 from ..config import TrainConfig
-from ..data.encode import MOVES_LEFT_UNKNOWN, planes_from_bits_batch
+from ..data.cache import permutation
+from ..data.encode import (
+    CP_UNKNOWN,
+    MOVES_LEFT_UNKNOWN,
+    canonical_index,
+    canonical_planes,
+    planes_from_bits_batch,
+    win_prob,
+)
 from ..distill.prior_kl import prior_kl
 
-LOSS_WEIGHTS = {"policy": 1.0, "promo": 0.2, "wdl": 1.0, "pv": 0.5, "moves_left": 0.1}
+LOSS_WEIGHTS = {
+    "policy": 1.0,
+    "promo": 0.2,
+    "wdl": 0.3,
+    "value": 1.0,
+    "pv": 0.05,
+    "moves_left": 0.1,
+}
 PV_PLIES = 6
 
 
 def batch_from_records(records: Sequence[np.ndarray]) -> dict[str, torch.Tensor]:
-    planes = planes_from_bits_batch(
-        np.stack([r["pieces"] for r in records]), np.stack([r["meta"] for r in records])
-    ).astype(np.float32)
+    bits = np.stack([r["pieces"] for r in records])
+    meta = np.stack([r["meta"] for r in records])
+    black = meta[:, 2] == 0
+    planes = canonical_planes(planes_from_bits_batch(bits, meta), black).astype(np.float32)
     policy_idx = np.stack([r["policy"] for r in records]).astype(np.int64)
+    policy_idx[black] = canonical_index(policy_idx[black])
     policy_prob = np.stack([r["policy_prob"] for r in records]).astype(np.float32) / 65535.0
     pv = np.stack([r["pv"] for r in records]).astype(np.int64)
+    pv[black] = np.where(pv[black] > 0, canonical_index(pv[black]), 0)
+    cp = np.stack([r["cp"] for r in records]).astype(np.int64)
+    known = cp != CP_UNKNOWN
+    value = np.zeros(len(records), dtype=np.float32)
+    for i in np.flatnonzero(known):
+        value[i] = 2.0 * win_prob(int(cp[i]), bool(meta[i, 2] == 1)) - 1.0
     return {
         "planes": torch.from_numpy(planes),
         "policy_idx": torch.from_numpy(policy_idx),
         "policy_prob": torch.from_numpy(policy_prob),
         "promo": torch.tensor([int(r["promo"]) for r in records], dtype=torch.long),
         "wdl": torch.tensor([int(r["wdl"]) for r in records], dtype=torch.long),
+        "value": torch.from_numpy(value),
+        "value_mask": torch.from_numpy(known.astype(np.float32)),
         "pv": torch.from_numpy(pv),
         "moves_left": torch.tensor(
             [int(r["moves_left"]) for r in records], dtype=torch.float32
@@ -77,6 +105,9 @@ def compute_loss(
     ml_target = batch["moves_left"].clamp(max=MOVES_LEFT_UNKNOWN - 1) / 100.0
     ml_loss = ((outputs["moves_left"] - ml_target) ** 2 * ml_mask).sum() / ml_mask.sum().clamp(min=1)
 
+    value_mask = batch["value_mask"]
+    value_loss = ((outputs["value"] - batch["value"]) ** 2 * value_mask).sum() / value_mask.sum().clamp(min=1)
+
     # Forward KL to the teacher prior over the recorded top-8 support (KTD11),
     # computed on labeled rows only — unlabeled rows have no meaningful prior.
     labeled = has_policy.bool()
@@ -95,6 +126,7 @@ def compute_loss(
         LOSS_WEIGHTS["policy"] * policy_loss
         + LOSS_WEIGHTS["promo"] * promo_loss
         + LOSS_WEIGHTS["wdl"] * wdl_loss
+        + LOSS_WEIGHTS["value"] * value_loss
         + LOSS_WEIGHTS["pv"] * pv_loss
         + LOSS_WEIGHTS["moves_left"] * ml_loss
         + prior_kl_weight * kl
@@ -104,6 +136,7 @@ def compute_loss(
         "policy": float(policy_loss.detach()),
         "promo": float(promo_loss.detach()),
         "wdl": float(wdl_loss.detach()),
+        "value": float(value_loss.detach()),
         "pv": float(pv_loss.detach()),
         "moves_left": float(ml_loss.detach()),
         "prior_kl": float(kl.detach()),
@@ -124,6 +157,110 @@ def batch_slice(dataset: Sequence[np.ndarray], step: int, batch_size: int) -> li
     return [dataset[i] for i in indices]
 
 
+def batch_indices(n: int, batch_size: int, seed: int, step: int) -> np.ndarray:
+    """Shuffled index array for one step; depends only on the four arguments."""
+    # ceil, so the last batch of an epoch is short rather than dropped
+    per_epoch = max(1, -(-n // batch_size))
+    epoch, position = divmod(step, per_epoch)
+    return permutation(n, seed, epoch)[position * batch_size : (position + 1) * batch_size]
+
+
+def batch_frame(dataset: Sequence[np.ndarray], indices: np.ndarray) -> Sequence[np.ndarray]:
+    """Records for one batch; shard-backed datasets read each shard once."""
+    gather = getattr(dataset, "batch", None)
+    if gather is not None:
+        return gather(indices)
+    if isinstance(dataset, np.ndarray):
+        return dataset[indices]
+    return [dataset[int(i)] for i in indices]
+
+
+def batches(
+    dataset: Sequence[np.ndarray],
+    batch_size: int,
+    seed: int,
+    start_step: int,
+    steps: int,
+    depth: int = 4,
+) -> Iterator[dict[str, torch.Tensor]]:
+    """Yield prepared batches, assembled on a background thread.
+
+    Plane synthesis then overlaps the device step; ``depth`` bounds the queue so
+    a slow consumer cannot grow memory.
+    """
+    pending: queue.Queue = queue.Queue(maxsize=max(depth, 1))
+    stop = threading.Event()
+
+    def put(item: Any) -> bool:
+        while not stop.is_set():
+            try:
+                pending.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def produce() -> None:
+        try:
+            for offset in range(steps):
+                indices = batch_indices(len(dataset), batch_size, seed, start_step + offset)
+                if not put(batch_from_records(batch_frame(dataset, indices))):
+                    return
+            put(None)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller thread
+            put(exc)
+
+    threading.Thread(target=produce, daemon=True).start()
+    try:
+        while (prepared := pending.get()) is not None:
+            if isinstance(prepared, BaseException):
+                raise prepared
+            yield prepared
+    finally:
+        stop.set()
+
+
+def evaluate(
+    model: nn.Module,
+    dataset: Sequence[np.ndarray],
+    cfg: TrainConfig,
+    max_batches: int = 8,
+    device: str = "cpu",
+) -> dict[str, float]:
+    """Validation metrics on the tail (last 2%) of the cache; no gradients."""
+    model.to(device)
+    was_training = model.training
+    model.eval()
+    n = len(dataset)
+    holdout = min(max(n // 50, 1), max(max_batches, 1) * cfg.batch_size)
+    policy_hits = policy_total = wdl_hits = wdl_total = 0
+    errors: list[float] = []
+    with torch.no_grad():
+        for start in range(n - holdout, n, cfg.batch_size):
+            indices = np.arange(start, min(start + cfg.batch_size, n))
+            batch = {
+                k: v.to(device) for k, v in batch_from_records(batch_frame(dataset, indices)).items()
+            }
+            outputs = model(batch["planes"])
+            labeled = batch["policy_prob"].sum(-1) > 0
+            policy_hits += int(
+                (outputs["policy"].argmax(-1) == batch["policy_idx"][:, 0])[labeled].sum()
+            )
+            policy_total += int(labeled.sum())
+            known = batch["wdl"] < 3
+            wdl_hits += int((outputs["wdl"].argmax(-1) == batch["wdl"])[known].sum())
+            wdl_total += int(known.sum())
+            valued = batch["value_mask"] > 0
+            errors.extend((outputs["value"] - batch["value"]).abs()[valued].tolist())
+    if was_training:
+        model.train()
+    return {
+        "value_mae": float(np.mean(errors)) if errors else float("nan"),
+        "policy_top1": policy_hits / max(policy_total, 1),
+        "wdl_accuracy": wdl_hits / max(wdl_total, 1),
+    }
+
+
 def train(
     model: nn.Module,
     dataset: Sequence[np.ndarray],
@@ -142,11 +279,13 @@ def train(
     use_bf16 = torch.device(device).type == "cuda"
     metrics: dict[str, float] = {}
     started = time.time()
-    for offset in range(steps):
+    for offset, prepared in enumerate(
+        batches(dataset, cfg.batch_size, cfg.seed, start_step, steps)
+    ):
         step = start_step + offset
         for group in optimizer.param_groups:
             group["lr"] = learning_rate(step, cfg)
-        batch = {k: v.to(device) for k, v in batch_from_records(batch_slice(dataset, step, cfg.batch_size)).items()}
+        batch = {k: v.to(device) for k, v in prepared.items()}
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
             outputs = train_model(batch["planes"])
