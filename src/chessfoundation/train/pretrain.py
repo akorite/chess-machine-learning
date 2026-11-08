@@ -56,17 +56,23 @@ def run_ssl(
     cfg: TrainConfig,
     steps: int,
     device: str = "cpu",
+    optimizer: torch.optim.Optimizer | None = None,
+    start_step: int = 0,
+    save_path: str | Path | None = None,
+    save_every: int = 0,
 ) -> dict[str, float]:
     model = model.to(device)
     decoder = MaskedPieceDecoder(model.preset.d_model).to(device)
-    optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(decoder.parameters()),
-        lr=cfg.lr,
-        weight_decay=cfg.weight_decay,
-    )
+    if optimizer is None:
+        optimizer = torch.optim.AdamW(
+            list(model.parameters()) + list(decoder.parameters()),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+        )
     model.train()
     loss_value = float("nan")
-    for step in range(steps):
+    for offset in range(steps):
+        step = start_step + offset
         batch = loop.batch_from_records(loop.batch_slice(dataset, step, cfg.batch_size))
         planes = batch["planes"].to(device)
         optimizer.zero_grad(set_to_none=True)
@@ -75,6 +81,8 @@ def run_ssl(
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
         loss_value = float(loss.detach())
+        if save_path and save_every and (offset + 1) % save_every == 0:
+            save(save_path, model, optimizer, step=step + 1, meta={"stage": "ssl"})
     return {"ssl_loss": loss_value, "steps": float(steps)}
 
 
@@ -97,7 +105,7 @@ def run_stage(
         check_stage_source(stage, counts)
     dataset = ShardDataset(data_dir)
     if stage == "ssl":
-        return run_ssl(model, dataset, cfg, steps, device)
+        return run_ssl(model, dataset, cfg, steps, device, optimizer, start_step, save_path, save_every)
     if optimizer is None:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     done = 0
@@ -133,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     model = build_student(args.preset)
+    if args.qat:
+        prepare_qat(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     start_step = 0
     if args.init:
@@ -147,8 +157,6 @@ def main(argv: list[str] | None = None) -> int:
     manifest = Path(args.data) / MANIFEST
     if manifest.exists():
         counts = json.loads(manifest.read_text()).get("counts")
-    if args.qat:
-        prepare_qat(model)
     cfg = TrainConfig(
         batch_size=args.batch_size, lr=args.lr, max_steps=args.steps + start_step,
         compile=args.compile,

@@ -88,3 +88,34 @@ def test_ssl_step_runs_and_returns_loss():
     metrics = pretrain.run_ssl(model, records(8), cfg, steps=3)
     assert np.isfinite(metrics["ssl_loss"])
     assert metrics["steps"] == 3
+
+def test_qat_checkpoint_resumes_cleanly(tmp_path):
+    import torch
+
+    from chessfoundation.data import cache
+    from chessfoundation.quant.qat import prepare_qat
+    from chessfoundation.train.checkpoint import save
+
+    cache.write_shard(tmp_path / "shard-00000.bin", records(8))
+    cache.write_manifest(tmp_path, {"records": 8, "24plus": 8})
+
+    from chessfoundation.model.presets import build_student
+    model = build_student("p6m")
+    prepare_qat(model)
+    ckpt = tmp_path / "mid_qat.pt"
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    save(ckpt, model, opt, step=10, meta={"stage": "deep"})
+
+    out = tmp_path / "resumed.pt"
+    rc = pretrain.main([
+        "--stage", "deep",
+        "--data", str(tmp_path),
+        "--preset", "p6m",
+        "--steps", "2",
+        "--batch-size", "4",
+        "--qat",
+        "--resume", str(ckpt),
+        "--out", str(out),
+    ])
+    assert rc == 0
+    assert out.exists()

@@ -99,15 +99,40 @@ def build(
     shard_size: int = 100_000,
     max_records: int = 0,
     counts: dict[str, int] | None = None,
+    append: bool = False,
 ) -> dict[str, int]:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    clear_shards(out)
-    buffer: list[np.ndarray] = []
-    total = 0
-    shard_index = 0
-    counts = dict(counts or {})
+    manifest_path = out / MANIFEST_NAME
     entries: dict[str, dict] = {}
+    counts = dict(counts or {})
+    shard_index = 0
+    prior_records = 0
+
+    if append and manifest_path.exists():
+        try:
+            prior_data = json.loads(manifest_path.read_text())
+            entries.update(prior_data.get("shards", {}))
+            prior_counts = prior_data.get("counts", {})
+            prior_records = int(prior_counts.get("records", 0))
+            for k, v in prior_counts.items():
+                if k != "records":
+                    counts[k] = counts.get(k, 0) + v
+            indices = [
+                int(p.stem.split("-")[-1])
+                for p in out.glob("shard-*.bin")
+                if p.stem.split("-")[-1].isdigit()
+            ]
+            if indices:
+                shard_index = max(indices) + 1
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            import sys
+            print(f"warning: could not read prior manifest {manifest_path}: {exc}", file=sys.stderr)
+    elif not append:
+        clear_shards(out)
+
+    buffer: list[np.ndarray] = []
+    added = 0
 
     def flush() -> None:
         nonlocal shard_index, buffer
@@ -120,20 +145,20 @@ def build(
         }
         buffer = []
         shard_index += 1
-        # incremental manifest: a mid-build crash leaves a resumable prefix
-        counts["records"] = total
-        (out / MANIFEST_NAME).write_text(
+        counts["records"] = prior_records + added
+        manifest_path.write_text(
             json.dumps({"counts": counts, "shards": entries}, indent=2, sort_keys=True)
         )
 
     for record in records:
         buffer.append(record)
-        total += 1
+        added += 1
         if len(buffer) >= shard_size:
             flush()
-        if max_records and total >= max_records:
+        if max_records and (prior_records + added) >= max_records:
             break
     flush()
+    total = prior_records + added
     if total == 0:
         raise ValueError("no records produced")
     return {"records": total, "shards": shard_index}
@@ -153,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit-shards", type=int, default=0)
     parser.add_argument("--count-only", action="store_true")
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--append", action="store_true")
     args = parser.parse_args(argv)
 
     if args.verify:
@@ -188,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
         records = puzzle_records(args.source_path, args.min_rating, args.max_rating)
     else:
         records = game_records([args.source_path])
-    result = build(records, args.out, args.shard_size, args.max_records, counts)
+    result = build(records, args.out, args.shard_size, args.max_records, counts, append=args.append)
     print(result)
     return 0
 

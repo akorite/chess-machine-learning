@@ -49,3 +49,24 @@ def test_build_refuses_empty_input(tmp_path):
         assert "no records" in str(exc)
     else:
         raise AssertionError("empty build must fail")
+
+def test_build_append_preserves_existing_shards(tmp_path):
+    source = write_evals(tmp_path)
+    out = tmp_path / "cache"
+    build_cache.build(
+        build_cache.lichess_records(str(source), 24, 100_000),
+        out,
+        shard_size=1,
+    )
+    assert len(cache.shard_paths(out)) == 2
+    result = build_cache.build(
+        build_cache.lichess_records(str(source), 24, 100_000),
+        out,
+        shard_size=1,
+        append=True,
+    )
+    assert result == {"records": 4, "shards": 4}
+    assert len(cache.shard_paths(out)) == 4
+    assert cache.verify(out) == []
+    dataset = cache.ShardDataset(out)
+    assert len(dataset) == 4

@@ -267,7 +267,8 @@ def _best_move(
         base = root.prior[index] + (gumbel[index] if gumbel and index in gumbel else 0.0)
         return base + (c_visit * child.mean if child is not None else 0.0)
 
-    best = max(legal, key=score)
+    considered_moves = [m for m in legal if not gumbel or move_index(m) in gumbel] or legal
+    best = max(considered_moves, key=score)
     if best.promotion is not None:
         choice = _promotion_choice(root, best.from_square, best.to_square)
         if choice is not None:
