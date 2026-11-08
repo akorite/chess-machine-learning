@@ -18,13 +18,15 @@ SRC = f"{CODE}/src"
 CACHE = "/content/cache/mix"
 CHECKPOINTS = "/content/checkpoints"
 RESULTS = "/content/results"
-STOCKFISH = "/content/bin/stockfish/stockfish-ubuntu-x86-64-avx2"
+STOCKFISH = "/content/bin/stockfish/stockfish-ubuntu-x86-64-avx2"  # resolved by ensure_engine()
 BOOK = f"{CODE}/data/book.bin"
 SOURCE_PATHS = [
     "--source-path", "lichess=/content/data/lichess_evals",
     "--source-path", "gigafish=/content/data/gigafish",
 ]
 ENV = {**os.environ, "PYTHONPATH": SRC}
+if os.path.isdir(f"{SRC}/chessfoundation") and SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
 
 def log(message: str) -> None:
@@ -45,6 +47,20 @@ def run(args: list[str], timeout: int = 86400) -> int:
     return proc.returncode
 
 
+def ensure_engine() -> str:
+    """Locate a Stockfish binary; the release download is flaky, apt is not."""
+    import shutil
+
+    if os.path.exists(STOCKFISH):
+        return STOCKFISH
+    found = shutil.which("stockfish")
+    if found:
+        return found
+    subprocess.run(["apt-get", "update", "-qq"], check=False)
+    subprocess.run(["apt-get", "install", "-y", "-qq", "stockfish"], check=False)
+    return shutil.which("stockfish") or STOCKFISH
+
+
 def stage_corpus() -> int:
     if os.path.exists(f"{CACHE}/manifest.json"):
         log("corpus already present")
@@ -53,7 +69,7 @@ def stage_corpus() -> int:
         [
             sys.executable, "-m", "chessfoundation.data.build_cache",
             "--out", CACHE, "--shard-size", "1000000",
-            "--mix", "lichess:30000000", "--mix", "gigafish:100000000",
+            "--mix", "lichess:60000000", "--mix", "gigafish:100000000",
             *SOURCE_PATHS, "--workers", "10",
         ]
     )
@@ -67,7 +83,7 @@ def stage_train() -> int:
     measured = throughput.measure(model, batch_size=1024, device="cuda", warmup=5, steps=20, bf16=True)
     log(f"throughput p6m bs=1024 {measured.positions_per_second:,.0f} pos/s "
         f"batch1 {measured.latency_ms_batch1:.1f} ms")
-    budget = float(os.environ.get("TRAIN_SECONDS", "10800"))
+    budget = float(os.environ.get("TRAIN_SECONDS", "3600"))
     batch = 1024
     steps = max(1000, int(measured.positions_per_second * budget / batch))
     log(f"training {steps:,} steps (~{steps * batch / 1e6:.0f}M positions)")
@@ -80,7 +96,7 @@ def stage_train() -> int:
             "--out", f"{CHECKPOINTS}/deep3.pt",
         ]
     )
-    if code == 0:
+    if code == 0 or os.path.exists(f"{CHECKPOINTS}/deep3.pt"):
         with open(f"{CHECKPOINTS}/deep3.metrics.json") as handle:
             log("final metrics " + handle.read()[:600])
     return code
@@ -97,13 +113,17 @@ def stage_eval() -> int:
             "--search gumbel --device cuda \"$@\"\n"
         )
     os.chmod(student, 0o755)
+    opponent = ensure_engine()
+    if not os.path.exists(opponent):
+        log("no Stockfish binary; skipping matches")
+        return 1
     summary = {}
     for rung in (1320, 1500, 2000):
         out = f"{RESULTS}/ladder-{rung}.md"
         run(
             [
                 sys.executable, "-m", "chessfoundation.eval.ladder",
-                "--engine", student, "--opponent", STOCKFISH,
+                "--engine", student, "--opponent", opponent,
                 "--rungs", str(rung), "--book", BOOK, "--games", "40",
                 "--movetime", "100", "--pgn", f"{RESULTS}/ladder-{rung}", "--out", out,
             ]
