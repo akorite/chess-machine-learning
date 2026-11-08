@@ -30,8 +30,9 @@ def iter_evals(
     min_knodes: int = 100_000,
     deep: bool = True,
     limit_shards: int = 0,
+    row_groups: list[int] | None = None,
 ) -> Iterator[EvalRow]:
-    for row in iter_rows(source, COLUMNS, limit_shards):
+    for row in iter_rows(source, COLUMNS, limit_shards, row_groups):
         if row.get("cp") is None and row.get("mate") is None:
             continue
         if deep and not is_deep(row, min_depth, min_knodes):

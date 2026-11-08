@@ -41,6 +41,7 @@ DEFAULT_OPTIONS = {
     "max_rating": 2200,
     "max_plies": 200,
 }
+TARGET_JOB_ROWS = 2_000_000  # rows per build job when a shard is split
 PART_BLOCK = 65_536
 
 
@@ -68,9 +69,12 @@ def lichess_records(
     min_knodes: int,
     limit_shards: int = 0,
     counts: dict[str, int] | None = None,
+    row_groups: list[int] | None = None,
 ) -> Iterator[np.ndarray]:
     return _counted(
-        "lichess", _lichess(source, min_depth, min_knodes, limit_shards, counts), counts
+        "lichess",
+        _lichess(source, min_depth, min_knodes, limit_shards, counts, row_groups),
+        counts,
     )
 
 
@@ -80,9 +84,10 @@ def _lichess(
     min_knodes: int,
     limit_shards: int,
     counts: dict[str, int] | None,
+    row_groups: list[int] | None = None,
 ) -> Iterator[np.ndarray]:
     for row in iter_evals(
-        source, min_depth, min_knodes, deep=True, limit_shards=limit_shards
+        source, min_depth, min_knodes, deep=True, limit_shards=limit_shards, row_groups=row_groups
     ):
         depth = int(
             getattr(row, "depth", 0)
@@ -109,13 +114,18 @@ def _lichess(
 
 
 def gigafish_records(
-    source: str, limit_shards: int = 0, counts: dict[str, int] | None = None
+    source: str,
+    limit_shards: int = 0,
+    counts: dict[str, int] | None = None,
+    row_groups: list[int] | None = None,
 ) -> Iterator[np.ndarray]:
-    return _counted("gigafish", _gigafish(source, limit_shards), counts)
+    return _counted("gigafish", _gigafish(source, limit_shards, row_groups), counts)
 
 
-def _gigafish(source: str, limit_shards: int) -> Iterator[np.ndarray]:
-    for row in gigafish.iter_evals(source, limit_shards):
+def _gigafish(
+    source: str, limit_shards: int, row_groups: list[int] | None = None
+) -> Iterator[np.ndarray]:
+    for row in gigafish.iter_evals(source, limit_shards, row_groups):
         try:
             yield record_from_eval(row["fen"], row["cp"], row["mate"], "")
         except (ValueError, chess.InvalidMoveError):
@@ -195,8 +205,16 @@ def source_records(
     options: dict[str, int] | None = None,
     limit_shards: int = 0,
     counts: dict[str, int] | None = None,
+    row_groups: list[int] | None = None,
 ) -> Iterator[np.ndarray]:
     opts = {**DEFAULT_OPTIONS, **(options or {})}
+    if row_groups is not None and name in ("lichess", "gigafish"):
+        reader = lichess_records if name == "lichess" else gigafish_records
+        if name == "lichess":
+            return lichess_records(
+                path, opts["min_depth"], opts["min_knodes"], 0, counts, row_groups
+            )
+        return reader(path, 0, counts, row_groups)
     if name == "lichess":
         return lichess_records(
             path, opts["min_depth"], opts["min_knodes"], limit_shards, counts
@@ -281,25 +299,65 @@ def mix_jobs(
             shards = _shards_covering(shards, cap)
             per_shard = max(1, -(-cap // max(1, len(shards))))
         for index, shard in enumerate(shards):
-            jobs.append(
-                {
-                    "source": name,
-                    "cap": cap,
-                    "max_rows": per_shard,
-                    "options": opts,
-                    "shard": str(shard),
-                    "part": str(
-                        Path(scratch) / f"part-{len(jobs):05d}-{index:05d}-{name}.bin"
-                    ),
-                }
-            )
+            for start, count, rows in _row_group_chunks(shard, per_shard):
+                jobs.append(
+                    {
+                        "source": name,
+                        "cap": cap,
+                        "max_rows": rows,
+                        "row_groups": (
+                            list(range(start, start + count)) if count else None
+                        ),
+                        "options": opts,
+                        "shard": str(shard),
+                        "part": str(
+                            Path(scratch)
+                            / f"part-{len(jobs):05d}-{index:05d}-{name}.bin"
+                        ),
+                    }
+                )
     return jobs
+
+
+def _row_group_chunks(shard: Path, per_shard: int) -> list[tuple[int, int, int]]:
+    """Split one parquet shard into parallel jobs over its row groups.
+
+    A single 57M-row evaluation file on one worker made the whole corpus build
+    wait on one process; row groups are independently readable, so each job
+    converts its own slice. Returns (start_group, group_count, row_budget).
+    """
+    import pyarrow.parquet as pq
+
+    try:
+        meta = pq.ParquetFile(shard).metadata
+    except (OSError, ValueError):
+        return [(0, 0, per_shard)]
+    groups = int(meta.num_row_groups)
+    if not per_shard or groups <= 1:
+        return [(0, 0, per_shard)]
+    want = max(1, min(groups, -(-per_shard // TARGET_JOB_ROWS)))
+    size = -(-groups // want)
+    chunks: list[tuple[int, int, int]] = []
+    remaining = per_shard
+    for start in range(0, groups, size):
+        count = min(size, groups - start)
+        rows = 0
+        for group in range(start, start + count):
+            rows += int(meta.row_group(group).num_rows)
+        budget = min(rows, remaining) if remaining else rows
+        chunks.append((start, count, budget))
+        remaining = max(0, remaining - budget)
+        if per_shard and remaining == 0:
+            break
+    return chunks
 
 
 def convert(job: dict) -> tuple[str, str, int, dict[str, int]]:
     """Worker: convert one source shard into a part file owned by this process only."""
     local: dict[str, int] = {}
-    records = source_records(job["source"], job["shard"], job["options"], 0, local)
+    records = source_records(
+        job["source"], job["shard"], job["options"], 0, local, job.get("row_groups")
+    )
     budget = job["max_rows"] or job["cap"]
     if budget:
         records = itertools.islice(records, budget)

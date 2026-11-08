@@ -14,7 +14,9 @@ def parse_eval(text: str) -> tuple[int | None, int | None]:
     return round(float(text) * 100), None
 
 
-def iter_evals(source: str, limit_shards: int = 0) -> Iterator[dict]:
-    for row in iter_rows(source, ["fen", "eval"], limit_shards):
+def iter_evals(
+    source: str, limit_shards: int = 0, row_groups: list[int] | None = None
+) -> Iterator[dict]:
+    for row in iter_rows(source, ["fen", "eval"], limit_shards, row_groups):
         cp, mate = parse_eval(row["eval"])
         yield {"fen": row["fen"], "cp": cp, "mate": mate}

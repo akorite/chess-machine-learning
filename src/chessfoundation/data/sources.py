@@ -29,7 +29,10 @@ def resolve_shards(source: str, limit: int = 0) -> list[Path]:
 
 
 def iter_rows(
-    source: str, columns: list[str] | None = None, limit_shards: int = 0
+    source: str,
+    columns: list[str] | None = None,
+    limit_shards: int = 0,
+    row_groups: list[int] | None = None,
 ) -> Iterator[dict]:
     for shard in resolve_shards(source, limit_shards):
         parquet = pq.ParquetFile(shard)
@@ -39,5 +42,5 @@ def iter_rows(
             if missing:
                 raise ValueError(f"{shard} is missing columns {missing}")
         wanted = columns
-        for batch in parquet.iter_batches(batch_size=2048, columns=wanted):
+        for batch in parquet.iter_batches(batch_size=2048, columns=wanted, row_groups=row_groups):
             yield from batch.to_pylist()
