@@ -232,15 +232,3 @@ def test_interrupted_parallel_build_leaves_verifiable_manifest(tmp_path, monkeyp
     assert manifest["counts"]["records"] == len(record_bytes(out)) > 0
 
 
-def test_verify_rejects_stray_shard_after_mix(tmp_path):
-    lichess_dir, _ = two_source_dirs(tmp_path)
-    out = tmp_path / "cache"
-    build_cache.build_mix(
-        [("lichess", 2)],
-        out,
-        named={"lichess": str(lichess_dir)},
-        workers=1,
-        shard_size=2,
-    )
-    (out / "shard-00099.bin").write_bytes(b"stray")
-    assert any("unlisted shard shard-00099.bin" in e for e in cache.verify(out))

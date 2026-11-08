@@ -17,7 +17,7 @@ import numpy as np
 
 from . import chessbench, gigafish, lc0_games, puzzles
 from .cache import MANIFEST as MANIFEST_NAME
-from .cache import clear_shards, sha256, verify, write_shard
+from .cache import clear_shards, sha256, shard_paths, verify, write_shard
 from .encode import (
     RECORD_DTYPE,
     move_index,
@@ -367,9 +367,9 @@ class _Writer:
                     k: int(v) for k, v in prior_counts.items() if k != "records"
                 }
                 indices = [
-                    int(p.stem.split("-")[-1])
-                    for p in self.out.glob("shard-*.bin")
-                    if p.stem.split("-")[-1].isdigit()
+                    int(path.stem.rsplit("-", 1)[-1])
+                    for path in shard_paths(self.out)
+                    if path.stem.rsplit("-", 1)[-1].isdigit()
                 ]
                 if indices:
                     self.shard_index = max(indices) + 1
@@ -393,13 +393,6 @@ class _Writer:
             if self.fill == self.shard_size:
                 self._flush()
         return offset
-
-    def add_one(self, record: np.ndarray) -> None:
-        self.pieces.append(np.asarray(record, dtype=RECORD_DTYPE).reshape(1))
-        self.fill += 1
-        self.added += 1
-        if self.fill == self.shard_size:
-            self._flush()
 
     def _flush(self) -> None:
         if not self.fill:
@@ -447,7 +440,7 @@ def build(
     if max_records:
         stream = itertools.islice(records, max(0, max_records - writer.total))
     for record in stream:
-        writer.add_one(record)
+        writer.add(np.asarray(record, dtype=RECORD_DTYPE).reshape(1))
     return writer.close()
 
 
@@ -481,7 +474,7 @@ def build_mix(
     workers = workers or os.cpu_count() or 1
     # spawn: forking a parent that holds pyarrow/numpy threads can deadlock the children.
     pool = (
-        multiprocessing.get_context("spawn").Pool(workers)
+        multiprocessing.get_context("spawn").Pool(min(workers, len(jobs)))
         if workers > 1 and len(jobs) > 1
         else None
     )
@@ -494,8 +487,9 @@ def build_mix(
             cap = caps[name]
             keep = done if not cap else min(done, cap - written[name])
             if keep > 0:
-                added = writer.add(np.memmap(part, dtype=RECORD_DTYPE, mode="r")[:keep])
-                written[name] += keep
+                block = np.fromfile(part, dtype=RECORD_DTYPE, count=keep)
+                added = writer.add(block)
+                written[name] += added
                 key = f"source:{name}"
                 counts[key] = counts.get(key, 0) + added
                 for band, value in bands.items():

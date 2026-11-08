@@ -13,9 +13,22 @@ from .encode import RECORD_DTYPE
 MANIFEST = "manifest.json"
 
 
+_PERMUTATION: dict[tuple[int, int, int], np.ndarray] = {}
+
+
 def permutation(n: int, seed: int, epoch: int) -> np.ndarray:
-    """Shuffled index order for one epoch; identical arguments give identical order."""
-    return np.random.default_rng([seed, epoch]).permutation(n)
+    """Shuffled index order for one epoch; identical arguments give identical order.
+
+    One slot is memoized: a step asks for the same epoch's order many times, and
+    regenerating an n-element permutation dominates batch prep at large n.
+    """
+    key = (n, seed, epoch)
+    cached = _PERMUTATION.get(key)
+    if cached is None:
+        cached = np.random.default_rng([seed, epoch]).permutation(n)
+        _PERMUTATION.clear()
+        _PERMUTATION[key] = cached
+    return cached
 
 
 def shard_paths(directory: str | Path) -> list[Path]:

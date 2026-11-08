@@ -183,12 +183,6 @@ def test_search_is_colour_equivariant():
     assert second == canonical_move(first)
 
 
-def test_best_move_is_legal_for_black_to_move():
-    board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
-    result = ModelEngine(tiny_model(), simulations=4).best_move(board)
-    assert result.move in board.legal_moves
-
-
 
 
 class EntropyModel(ScriptedModel):

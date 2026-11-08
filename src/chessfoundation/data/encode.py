@@ -14,6 +14,7 @@ MOVES_LEFT_UNKNOWN = 255
 DRAW_CP = 50
 POLICY_PROB_MAX = 65535
 CP_MAX = 2000
+CP_PER_VALUE_UNIT = 400
 CP_UNKNOWN = -32768
 
 RECORD_DTYPE = np.dtype(
@@ -194,18 +195,16 @@ def wdl_from_mate(mate: int, white_to_move: bool) -> int:
     return 2 if (mate > 0) == white_to_move else 0
 
 
-def win_prob(cp: int, white_to_move: bool, blurred: int = 0) -> float:
-    """Side-to-move win probability; `blurred` averages the eval over ±cp of noise."""
+def win_prob(cp: int, white_to_move: bool) -> float:
+    """Side-to-move win probability from a centipawn score."""
     if cp == CP_UNKNOWN:
         raise ValueError("cp is unknown; mask unlabeled records from the value loss")
     stm = int(cp) if white_to_move else -int(cp)
-    if blurred:
-        return 0.5 * (win_prob(stm - blurred, True) + win_prob(stm + blurred, True))
     if stm >= CP_MAX:
         return 1.0
     if stm <= -CP_MAX:
         return 0.0
-    return 1 / (1 + 10 ** (-stm / 400))
+    return 1 / (1 + 10 ** (-stm / CP_PER_VALUE_UNIT))
 
 
 def set_best_move(record: np.ndarray, move: chess.Move, prob: int = POLICY_PROB_MAX) -> None:

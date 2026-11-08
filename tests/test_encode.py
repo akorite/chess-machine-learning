@@ -223,8 +223,6 @@ def test_win_prob_saturates_for_mate():
     assert win_prob(-CP_MAX, white_to_move=False) == 1.0
 
 
-def test_win_prob_blur_pulls_toward_even():
-    assert win_prob(800, white_to_move=True, blurred=400) < win_prob(800, white_to_move=True)
 
 
 def test_record_from_board_marks_cp_unknown():

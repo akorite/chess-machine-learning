@@ -50,7 +50,7 @@ def batch_from_records(records: Sequence[np.ndarray]) -> dict[str, torch.Tensor]
     known = cp != CP_UNKNOWN
     value = np.zeros(len(records), dtype=np.float32)
     for i in np.flatnonzero(known):
-        value[i] = 2.0 * win_prob(int(cp[i]), bool(meta[i, 2] == 1)) - 1.0
+        value[i] = 2.0 * win_prob(int(cp[i]), not black[i]) - 1.0
     return {
         "planes": torch.from_numpy(planes),
         "policy_idx": torch.from_numpy(policy_idx),
@@ -157,6 +157,14 @@ def batch_slice(dataset: Sequence[np.ndarray], step: int, batch_size: int) -> li
     return [dataset[i] for i in indices]
 
 
+HOLDOUT_FRACTION = 50
+
+
+def training_rows(n: int) -> int:
+    """Records the trainer samples; the tail is reserved for probe metrics."""
+    return max(1, n - max(n // HOLDOUT_FRACTION, 0))
+
+
 def batch_indices(n: int, batch_size: int, seed: int, step: int) -> np.ndarray:
     """Shuffled index array for one step; depends only on the four arguments."""
     # ceil, so the last batch of an epoch is short rather than dropped
@@ -203,7 +211,7 @@ def batches(
     def produce() -> None:
         try:
             for offset in range(steps):
-                indices = batch_indices(len(dataset), batch_size, seed, start_step + offset)
+                indices = batch_indices(training_rows(len(dataset)), batch_size, seed, start_step + offset)
                 if not put(batch_from_records(batch_frame(dataset, indices))):
                     return
             put(None)
@@ -227,7 +235,7 @@ def evaluate(
     max_batches: int = 8,
     device: str = "cpu",
 ) -> dict[str, float]:
-    """Validation metrics on the tail (last 2%) of the cache; no gradients."""
+    """Probe metrics on the tail the trainer never samples; no gradients."""
     model.to(device)
     was_training = model.training
     model.eval()

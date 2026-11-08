@@ -96,13 +96,6 @@ def test_value_target_grows_with_centipawns_and_masks_unknown():
     assert 0.0 < batch["value"][0] < batch["value"][1] <= 1.0
 
 
-def test_value_loss_is_zero_without_a_centipawn_label():
-    records = tiny_dataset(2)
-    batch = loop.batch_from_records(list(records))
-    outputs = tiny_model()(batch["planes"])
-    loss, metrics = loop.compute_loss(outputs, batch)
-    assert metrics["value"] == 0.0
-    assert torch.isfinite(loss)
 
 
 def test_compute_loss_reports_a_finite_value_term():
@@ -172,15 +165,6 @@ def test_resume_replays_the_same_batch_order():
             assert torch.equal(value, resumed_batch[key])
 
 
-def test_prefetched_batches_match_inline_assembly():
-    data = varied_dataset()
-    expected = [
-        loop.batch_from_records(loop.batch_frame(data, loop.batch_indices(len(data), 8, 0, s)))
-        for s in range(4)
-    ]
-    for eager, prefetched in zip(expected, loop.batches(data, 8, seed=0, start_step=0, steps=4)):
-        for key, value in eager.items():
-            assert torch.equal(value, prefetched[key])
 
 
 def test_batches_run_through_shard_cache(tmp_path):

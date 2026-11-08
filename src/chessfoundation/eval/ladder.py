@@ -32,6 +32,24 @@ LADDER: tuple[Rung, ...] = (
 )
 
 
+def parse_rungs(text: str) -> tuple[Rung, ...]:
+    """`1320,1500,nodes:10000` -> rung tuple; empty text keeps the module ladder."""
+    if not text.strip():
+        return LADDER
+    rungs: list[Rung] = []
+    for token in text.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if token.startswith("nodes:"):
+            rungs.append(Rung(f"N{token.removeprefix('nodes:')}", nodes=int(token.removeprefix("nodes:"))))
+        else:
+            rungs.append(Rung(f"L{token}", uci_elo=int(token)))
+    if not rungs:
+        raise ValueError("no rungs parsed")
+    return tuple(rungs)
+
+
 @dataclass(frozen=True)
 class LadderStep:
     rung: Rung
@@ -107,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--book", default="")
     parser.add_argument("--pgn", default="ladder.pgn")
     parser.add_argument("--out", default="report.md")
+    parser.add_argument("--rungs", default="", help="comma-separated UCI_Elo values or nodes:N")
     args = parser.parse_args(argv)
 
     openings = book_lines(args.book) if args.book else ()
@@ -134,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return result
 
-    steps = climb(play, games=args.games)
+    steps = climb(play, games=args.games, rungs=parse_rungs(args.rungs))
     best = best_rung(steps)
     rows = [
         Row(step.rung.describe(), step.result, f"pinned rung, {args.games} games, 1+0")

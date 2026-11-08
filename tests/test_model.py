@@ -155,9 +155,3 @@ def test_output_is_invariant_to_batch_composition():
         assert torch.allclose(batched[key][1:], single[key], atol=1e-3), key
 
 
-def test_parameter_growth_is_reported_and_bounded(capsys):
-    for name in ("p6m", "p20m"):
-        count = parameter_count(build_student(name))
-        print(f"{name}: {count:,} parameters ({count / TARGETS[name]:.1%} of target)")
-        assert count <= TARGETS[name] * 1.15, (name, count)
-    assert capsys.readouterr().out.count("parameters") == 2

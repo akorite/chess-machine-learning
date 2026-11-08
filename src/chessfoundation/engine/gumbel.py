@@ -84,7 +84,12 @@ def _evaluate(model: nn.Module, boards: list[chess.Board], device: str, bf16: bo
     logits[black] = logits[black][:, _MOVE_MIRROR]
     logits = np.where(masks, logits, -np.inf)
     wdl = outputs["wdl"].softmax(-1).detach().cpu().numpy()
-    value = (wdl * np.array([-1.0, 0.0, 1.0])).sum(-1)
+    # The trained value head is the calibrated estimate; fall back to WDL for
+    # checkpoints exported before it existed.
+    if "value" in outputs:
+        value = outputs["value"].detach().cpu().numpy().astype(np.float64)
+    else:
+        value = (wdl * np.array([-1.0, 0.0, 1.0])).sum(-1)
     promo = outputs["promo"].detach().cpu().numpy()
     return logits, wdl, value, promo
 

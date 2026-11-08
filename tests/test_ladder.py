@@ -251,3 +251,9 @@ def test_pretrain_out_writes_metrics_json(tmp_path):
     assert metrics.exists()
     saved = json.loads(metrics.read_text())
     assert saved["steps"] == 1
+
+
+def test_parse_rungs_from_cli_text():
+    rungs = ladder.parse_rungs("1320, 1500, nodes:10000")
+    assert [(r.uci_elo, r.nodes) for r in rungs] == [(1320, None), (1500, None), (10000, None)][:2] + [(None, 10000)]
+    assert ladder.parse_rungs("") == ladder.LADDER
