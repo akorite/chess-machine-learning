@@ -16,8 +16,8 @@ import chess
 import numpy as np
 
 from . import chessbench, gigafish, lc0_games, puzzles
+from .cache import FORMAT_STAMP, clear_shards, sha256, shard_paths, verify, write_shard
 from .cache import MANIFEST as MANIFEST_NAME
-from .cache import clear_shards, sha256, shard_paths, verify, write_shard
 from .encode import (
     RECORD_DTYPE,
     move_index,
@@ -91,6 +91,10 @@ def _lichess(
         )
         if depth < 20:
             continue
+        try:
+            record = record_from_eval(row.fen, row.cp, row.mate, _principal(row.line))
+        except (ValueError, chess.InvalidMoveError):
+            continue
         if counts is not None:
             band = "20to23" if depth < 24 else "24plus"
             counts[band] = counts.get(band, 0) + 1
@@ -101,10 +105,7 @@ def _lichess(
             )
             if knodes >= 100_000:
                 counts["knodes100k"] = counts.get("knodes100k", 0) + 1
-        try:
-            yield record_from_eval(row.fen, row.cp, row.mate, _principal(row.line))
-        except (ValueError, chess.InvalidMoveError):
-            continue
+        yield record
 
 
 def gigafish_records(
@@ -414,7 +415,9 @@ class _Writer:
         )
         self.manifest.write_text(
             json.dumps(
-                {"counts": merged, "shards": self.entries}, indent=2, sort_keys=True
+                {"format": FORMAT_STAMP, "counts": merged, "shards": self.entries},
+                indent=2,
+                sort_keys=True,
             )
         )
 

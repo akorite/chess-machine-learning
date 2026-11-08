@@ -84,8 +84,8 @@ def _evaluate(model: nn.Module, boards: list[chess.Board], device: str, bf16: bo
     logits[black] = logits[black][:, _MOVE_MIRROR]
     logits = np.where(masks, logits, -np.inf)
     wdl = outputs["wdl"].softmax(-1).detach().cpu().numpy()
-    # The trained value head is the calibrated estimate; fall back to WDL for
-    # checkpoints exported before it existed.
+    # The trained value head is the calibrated estimate; the WDL expectation is
+    # the fallback for exported graphs that carry only the classification head.
     if "value" in outputs:
         value = outputs["value"].detach().cpu().numpy().astype(np.float64)
     else:

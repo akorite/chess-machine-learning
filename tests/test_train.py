@@ -174,8 +174,9 @@ def test_batches_run_through_shard_cache(tmp_path):
     cache.write_shard(tmp_path / "shard-00000.bin", data)
     cache.write_manifest(tmp_path, {"records": len(data)})
     dataset = cache.ShardDataset(tmp_path)
+    rows = loop.training_rows(len(data), 8)
     expected = [
-        loop.batch_from_records(loop.batch_frame(data, loop.batch_indices(len(data), 8, 0, s)))
+        loop.batch_from_records(loop.batch_frame(data, loop.batch_indices(rows, 8, 0, s)))
         for s in range(3)
     ]
     for eager, prefetched in zip(expected, loop.batches(dataset, 8, seed=0, start_step=0, steps=3)):

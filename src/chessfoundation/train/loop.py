@@ -157,12 +157,14 @@ def batch_slice(dataset: Sequence[np.ndarray], step: int, batch_size: int) -> li
     return [dataset[i] for i in indices]
 
 
-HOLDOUT_FRACTION = 50
+def probe_rows(n: int, batch_size: int, max_batches: int = 8) -> int:
+    """Rows reserved at the tail for probe metrics: the window that is measured."""
+    return max(1, min(max_batches * batch_size, n // 50 or n // 10 or 1))
 
 
-def training_rows(n: int) -> int:
-    """Records the trainer samples; the tail is reserved for probe metrics."""
-    return max(1, n - max(n // HOLDOUT_FRACTION, 0))
+def training_rows(n: int, batch_size: int, max_batches: int = 8) -> int:
+    """Records the trainer samples; the tail is never one of them."""
+    return max(1, n - probe_rows(n, batch_size, max_batches))
 
 
 def batch_indices(n: int, batch_size: int, seed: int, step: int) -> np.ndarray:
@@ -211,7 +213,8 @@ def batches(
     def produce() -> None:
         try:
             for offset in range(steps):
-                indices = batch_indices(training_rows(len(dataset)), batch_size, seed, start_step + offset)
+                n = training_rows(len(dataset), batch_size)
+                indices = batch_indices(n, batch_size, seed, start_step + offset)
                 if not put(batch_from_records(batch_frame(dataset, indices))):
                     return
             put(None)
@@ -240,7 +243,7 @@ def evaluate(
     was_training = model.training
     model.eval()
     n = len(dataset)
-    holdout = min(max(n // 50, 1), max(max_batches, 1) * cfg.batch_size)
+    holdout = probe_rows(n, cfg.batch_size, max_batches)
     policy_hits = policy_total = wdl_hits = wdl_total = 0
     errors: list[float] = []
     with torch.no_grad():

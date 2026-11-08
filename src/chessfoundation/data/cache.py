@@ -11,6 +11,7 @@ import numpy as np
 from .encode import RECORD_DTYPE
 
 MANIFEST = "manifest.json"
+FORMAT_STAMP = f"record-v{RECORD_DTYPE.itemsize}"  # dtype changes must invalidate old caches
 
 
 _PERMUTATION: dict[tuple[int, int, int], np.ndarray] = {}
@@ -65,7 +66,7 @@ def write_manifest(directory: str | Path, counts: dict[str, int]) -> Path:
         path.name: {"sha256": sha256(path), "records": path.stat().st_size // RECORD_DTYPE.itemsize}
         for path in shard_paths(directory)
     }
-    manifest = {"counts": counts, "shards": entries}
+    manifest = {"format": FORMAT_STAMP, "counts": counts, "shards": entries}
     path = directory / MANIFEST
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
     return path
@@ -91,6 +92,10 @@ def verify(directory: str | Path) -> list[str]:
         return [f"missing {manifest_path}"]
     manifest = json.loads(manifest_path.read_text())
     errors = []
+    if manifest.get("format") != FORMAT_STAMP:
+        errors.append(
+            f"format mismatch: {manifest.get('format')!r} != {FORMAT_STAMP!r}; rebuild the cache"
+        )
     for name, entry in manifest["shards"].items():
         if not _safe_name(name):
             errors.append(f"unsafe shard name {name}")

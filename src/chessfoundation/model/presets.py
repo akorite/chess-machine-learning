@@ -11,10 +11,6 @@ TOLERANCE = 0.05
 
 def build_student(name: str, pure_transformer: bool = False) -> Student:
     preset = PRESETS[name]
-    if preset.n_heads < 8:
-        raise ValueError(
-            f"{name} has {preset.n_heads} heads; the 64-token trunk needs >= 8"
-        )
     model = Student(preset, pure_transformer=pure_transformer)
     target = TARGETS[name]
     count = parameter_count(model)

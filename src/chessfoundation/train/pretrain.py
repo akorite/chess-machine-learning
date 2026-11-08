@@ -80,9 +80,10 @@ def run_ssl(
         )
     model.train()
     loss_value = float("nan")
-    for offset in range(steps):
+    for offset, batch in enumerate(
+        loop.batches(dataset, cfg.batch_size, cfg.seed, start_step, steps)
+    ):
         step = start_step + offset
-        batch = loop.batch_from_records(loop.batch_slice(dataset, step, cfg.batch_size))
         planes = batch["planes"].to(device)
         optimizer.zero_grad(set_to_none=True)
         loss = ssl_loss(model, decoder, planes)
