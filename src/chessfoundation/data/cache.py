@@ -133,7 +133,7 @@ class ShardDataset:
         start_batch: int = 0,
         batches: int = 0,
         limit: int = 0,
-        shard_batches: int = 8,
+        shard_batches: int = 2,
     ):
         """Batches in shuffled shard order, gathered inside one shard at a time.
 

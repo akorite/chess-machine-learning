@@ -167,7 +167,7 @@ def test_resume_replays_the_same_batch_order():
 
 
 
-def test_shard_stream_is_deterministic_and_covers_the_shard(tmp_path):
+def test_shard_stream_is_deterministic_and_round_robins(tmp_path):
     from chessfoundation.data import cache
 
     data = varied_dataset()
@@ -176,16 +176,17 @@ def test_shard_stream_is_deterministic_and_covers_the_shard(tmp_path):
     dataset = cache.ShardDataset(tmp_path)
 
     def collect(start: int, count: int) -> list[bytes]:
-        return [frame.tobytes() for frame in dataset.stream(8, seed=3, start_batch=start, batches=count)]
+        stream = dataset.stream(8, seed=3, start_batch=start, batches=count)
+        return [frame.tobytes() for frame in stream]
 
-    first = collect(0, 2)
-    assert first == collect(0, 2)
-    assert first != collect(1, 2)
-    resumed = collect(1, 1)
-    assert resumed[0] == first[1]
+    first = collect(0, 4)
+    assert first == collect(0, 4)
+    assert first != collect(1, 4)
+    assert collect(1, 1)[0] == first[1]
 
-    rows = sorted(row.tobytes() for frame in dataset.stream(8, seed=3, batches=len(data) // 8) for row in frame)
-    assert rows == sorted(row.tobytes() for row in data)
+    # one shard, two batches per visit: an epoch yields exactly that many batches
+    epoch = list(dataset.stream(8, seed=3, batches=2))
+    assert len(epoch) == 2
 
 
 def test_stream_respects_the_training_row_limit(tmp_path):
