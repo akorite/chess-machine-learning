@@ -33,6 +33,8 @@ class SearchConfig:
     budget_ms: float | None = None
     # Leaves evaluated per forward pass; 1 restores per-sim evaluation.
     eval_batch: int = 16
+    # Syzygy handle used to score leaves exactly instead of trusting the net.
+    tablebase: object | None = None
 
 
 DEFAULT_SEARCH = SearchConfig()
@@ -92,6 +94,17 @@ def _evaluate(model: nn.Module, boards: list[chess.Board], device: str, bf16: bo
         value = (wdl * np.array([-1.0, 0.0, 1.0])).sum(-1)
     promo = outputs["promo"].detach().cpu().numpy()
     return logits, wdl, value, promo
+
+
+def _tablebase_value(board: chess.Board, tablebase: object | None) -> float:
+    """Exact win/draw/loss from the tablebase, or NaN when it cannot answer."""
+    if tablebase is None:
+        return float("nan")
+    try:
+        wdl = tablebase.probe_wdl(board)
+    except (KeyError, ValueError, OSError):
+        return float("nan")
+    return max(-1.0, min(1.0, wdl / 2.0))
 
 
 def _terminal_value(board: chess.Board) -> float:
@@ -189,6 +202,10 @@ def search(
                     path.append(child)
                     if child_board.is_game_over():
                         value = _terminal_value(child_board)
+                    elif not np.isnan(
+                        exact := _tablebase_value(child_board, cfg.tablebase)
+                    ):
+                        value = exact
                     else:
                         pending.append((child, path))
                         queued = True

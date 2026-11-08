@@ -325,3 +325,23 @@ def test_batched_leaves_do_more_sims_per_second():
         np.random.default_rng(0),
     )
     assert batched.simulations >= 2 * unbatched.simulations
+
+
+def test_search_scores_tablebase_leaves_exactly(tmp_path):
+    import chess.syzygy
+
+    from chessfoundation.engine.gumbel import SearchConfig, search
+
+    source = "/home/ubuntu/syzygy"
+    if not os.path.isdir(source):
+        pytest.skip("syzygy files not present")
+    tablebase = chess.syzygy.open_tablebase(source)
+    model = ScriptedModel(chess.Move.from_uci("e1e2"))
+    try:
+        # KQvK: White is winning, so the search must not pick a losing line.
+        board = chess.Board("8/8/8/8/8/4k3/8/4K2Q w - - 0 1")
+        result = search(model, board, SearchConfig(simulations=8, tablebase=tablebase))
+        assert board.is_legal(result.move)
+        assert result.move.promotion is None
+    finally:
+        tablebase.close()

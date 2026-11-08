@@ -84,7 +84,11 @@ class ModelEngine:
             self.model,
             board,
             SearchConfig(
-                simulations=simulations, bf16=self.bf16, mode=self.search_mode, budget_ms=budget
+                simulations=simulations,
+                bf16=self.bf16,
+                mode=self.search_mode,
+                budget_ms=budget,
+                tablebase=self.tablebase,
             ),
         )
 
