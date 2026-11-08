@@ -1,3 +1,5 @@
+import json
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -37,6 +39,9 @@ def test_build_from_local_evals_produces_verified_shards(tmp_path):
     assert counts["knodes100k"] == 2
     assert result == {"records": 2, "shards": 2}
     assert cache.verify(out) == []
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["counts"]["24plus"] == 2
+    assert manifest["counts"]["knodes100k"] == 2
     dataset = cache.ShardDataset(out)
     assert len(dataset) == 2
     assert int(dataset[0]["policy"][0]) > 0

@@ -106,7 +106,7 @@ def build(
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = out / MANIFEST_NAME
     entries: dict[str, dict] = {}
-    counts = dict(counts or {})
+    counts_accum: dict[str, int] = {}
     shard_index = 0
     prior_records = 0
 
@@ -118,7 +118,7 @@ def build(
             prior_records = int(prior_counts.get("records", 0))
             for k, v in prior_counts.items():
                 if k != "records":
-                    counts[k] = counts.get(k, 0) + v
+                    counts_accum[k] = counts_accum.get(k, 0) + v
             indices = [
                 int(p.stem.split("-")[-1])
                 for p in out.glob("shard-*.bin")
@@ -146,9 +146,13 @@ def build(
         }
         buffer = []
         shard_index += 1
-        counts["records"] = prior_records + added
+        out_counts = dict(counts_accum)
+        if counts is not None:
+            for k, v in counts.items():
+                out_counts[k] = out_counts.get(k, 0) + v
+        out_counts["records"] = prior_records + added
         manifest_path.write_text(
-            json.dumps({"counts": counts, "shards": entries}, indent=2, sort_keys=True)
+            json.dumps({"counts": out_counts, "shards": entries}, indent=2, sort_keys=True)
         )
 
     for record in records:
