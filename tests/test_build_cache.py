@@ -26,11 +26,15 @@ def write_evals(tmp_path):
 def test_build_from_local_evals_produces_verified_shards(tmp_path):
     source = write_evals(tmp_path)
     out = tmp_path / "cache"
+    counts = {}
     result = build_cache.build(
-        build_cache.lichess_records(str(source), 24, 100_000),
+        build_cache.lichess_records(str(source), 24, 100_000, counts=counts),
         out,
         shard_size=1,
+        counts=counts,
     )
+    assert counts["24plus"] == 2
+    assert counts["knodes100k"] == 2
     assert result == {"records": 2, "shards": 2}
     assert cache.verify(out) == []
     dataset = cache.ShardDataset(out)
