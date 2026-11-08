@@ -40,12 +40,16 @@ def measure(
         started = time.perf_counter()
         for _ in range(steps):
             model(sample)
+        if torch.device(device).type == "cuda":
+            torch.cuda.synchronize()
         elapsed = time.perf_counter() - started
         single = torch.zeros(1, PLANES, 8, 8, device=device)
         model(single)
         single_started = time.perf_counter()
         for _ in range(5):
             model(single)
+        if torch.device(device).type == "cuda":
+            torch.cuda.synchronize()
         single_elapsed = (time.perf_counter() - single_started) / 5
     return Throughput(
         positions_per_second=steps * batch_size / max(elapsed, 1e-9),

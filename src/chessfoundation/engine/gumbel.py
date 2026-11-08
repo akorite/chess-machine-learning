@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -11,11 +12,10 @@ import torch
 from torch import nn
 
 from ..data.encode import (
-    PROMO_PIECES,
     board_planes,
     legal_masks,
     move_index,
-    promo_move,
+    promo_index,
 )
 
 
@@ -26,6 +26,10 @@ class SearchConfig:
     c_visit: float = 50.0
     bf16: bool = False
     mode: Literal["gumbel", "puct"] = "gumbel"
+    # Wall-clock ceiling in milliseconds; None means sim-count only.
+    budget_ms: float | None = None
+    # Leaves evaluated per forward pass; 1 restores per-sim evaluation.
+    eval_batch: int = 16
 
 
 DEFAULT_SEARCH = SearchConfig()
@@ -88,10 +92,12 @@ def _expand(model: nn.Module, node: _Node, device: str, bf16: bool = False) -> f
     return float(value[0]) if np.isnan(terminal) else terminal
 
 
-def _select(node: _Node, c_visit: float) -> int:
-    best_index, best_score = node.legal[0], -np.inf
+def _select(node: _Node, c_visit: float) -> int | None:
+    best_index, best_score = None, -np.inf
     for index in node.legal:
         child = node.children.get(index)
+        if child is not None and child.visits == 0:
+            continue  # queued for expansion in this batch
         score = node.prior[index] + (c_visit * child.mean if child is not None else 0.0)
         if score > best_score:
             best_index, best_score = index, score
@@ -131,44 +137,83 @@ def search(
         considered = sorted(root.legal, key=lambda i: root.prior[i], reverse=True)[: cfg.max_considered]
         gumbel = {i: -np.log(-np.log(rng.random() + 1e-12) + 1e-12) for i in considered}
     evaluated = 1
-    while evaluated < budget:
-        node = root
-        path: list[_Node] = []
-        while True:
-            if node.board.is_game_over():
-                value = _terminal_value(node.board)
+    pending: list[tuple[_Node, list[_Node]]] = []
+    started = time.monotonic()
+    while evaluated + len(pending) < budget:
+        if cfg.budget_ms is not None and (time.monotonic() - started) * 1000.0 >= cfg.budget_ms:
+            break
+        for _ in range(max(1, cfg.eval_batch) - len(pending)):
+            if evaluated + len(pending) >= budget:
                 break
-            if node is not root and node.visits == 0:
-                value = _expand(model, node, device, cfg.bf16)
+            if cfg.budget_ms is not None and (time.monotonic() - started) * 1000.0 >= cfg.budget_ms:
                 break
-            index = _select_root(root, gumbel, cfg.c_visit) if node is root else _select(node, cfg.c_visit)
-            child = node.children.get(index)
-            if child is None:
-                child_board = node.board.copy(stack=False)
-                child_board.push(_move_from_index(node, index))
-                child = _Node(child_board)
-                node.children[index] = child
-                path.append(child)
-                value = _expand(model, child, device, cfg.bf16)
-                break
-            node = child
-            path.append(node)
-        for item in reversed(path):
-            item.visits += 1
-            item.value_sum += -value
-            value = -value
-        root.visits += 1
-        evaluated += 1
+            node = root
+            path: list[_Node] = []
+            value = None
+            queued = False
+            while True:
+                if node.board.is_game_over():
+                    value = _terminal_value(node.board)
+                    break
+                if node is not root and node.visits == 0:
+                    break  # already queued in pending
+                index = _select_root(root, gumbel, cfg.c_visit) if node is root else _select(node, cfg.c_visit)
+                if index is None:
+                    break  # every candidate child is queued in pending
+                child = node.children.get(index)
+                if child is None:
+                    child_board = node.board.copy(stack=False)
+                    child_board.push(_move_from_index(node, index))
+                    child = _Node(child_board)
+                    node.children[index] = child
+                    path.append(child)
+                    if child_board.is_game_over():
+                        value = _terminal_value(child_board)
+                    else:
+                        pending.append((child, path))
+                        queued = True
+                    break
+                node = child
+                path.append(node)
+            if value is None:
+                if not queued:
+                    break
+                continue
+            for item in reversed(path):
+                item.visits += 1
+                item.value_sum += -value
+                value = -value
+            root.visits += 1
+            evaluated += 1
+        if not pending:
+            break
+        boards = [node.board for node, _ in pending]
+        logits, wdl, values, promos = _evaluate(model, boards, device, cfg.bf16)
+        for k, (node, path) in enumerate(pending):
+            node.prior = logits[k]
+            node.wdl = wdl[k]
+            node.promo = promos[k]
+            node.legal = [move_index(move) for move in node.board.legal_moves]
+            value = float(values[k])
+            for item in reversed(path):
+                item.visits += 1
+                item.value_sum += -value
+                value = -value
+            root.visits += 1
+            evaluated += 1
+        pending.clear()
 
     return SearchResult(_best_move(root, legal, gumbel, cfg.c_visit, cfg.mode), evaluated)
 
 
-def _select_root(root: _Node, gumbel: dict[int, float], c_visit: float) -> int:
-    best_index, best_score = root.legal[0], -np.inf
+def _select_root(root: _Node, gumbel: dict[int, float], c_visit: float) -> int | None:
+    best_index, best_score = None, -np.inf
     for index in root.legal:
         if gumbel and index not in gumbel:
             continue
         child = root.children.get(index)
+        if child is not None and child.visits == 0:
+            continue  # queued for expansion in this batch
         score = root.prior[index] + gumbel.get(index, 0.0) + (
             c_visit * child.mean if child is not None else 0.0
         )
@@ -187,6 +232,8 @@ def _move_from_index(node: _Node, index: int) -> chess.Move:
     if quiet:
         return quiet[0]
     if candidates:
+        if node.promo is not None:
+            return max(candidates, key=lambda move: node.promo[promo_index(move)])
         return candidates[0]
     raise ValueError(f"index {index} is not legal in {node.board.fen()}")
 
@@ -194,9 +241,14 @@ def _move_from_index(node: _Node, index: int) -> chess.Move:
 def _promotion_choice(root: _Node, from_square: int, to_square: int) -> chess.Move | None:
     if root.promo is None:
         return None
-    piece = PROMO_PIECES[int(np.argmax(root.promo))]
-    candidate = promo_move(from_square, to_square, PROMO_PIECES.index(piece))
-    return candidate if root.board.is_legal(candidate) else None
+    candidates = [
+        move
+        for move in root.board.legal_moves
+        if move.from_square == from_square and move.to_square == to_square
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda move: root.promo[promo_index(move)])
 
 
 def _best_move(
@@ -206,11 +258,12 @@ def _best_move(
     c_visit: float = 0.0,
     mode: str = "gumbel",
 ) -> chess.Move:
-    def score(move: chess.Move) -> float:
+    def score(move: chess.Move):
         index = move_index(move)
         child = root.children.get(index)
         if mode == "puct":
-            return float(child.visits) if child is not None else 0.0
+            visits = float(child.visits) if child is not None else 0.0
+            return (visits, root.prior[index])
         base = root.prior[index] + (gumbel[index] if gumbel and index in gumbel else 0.0)
         return base + (c_visit * child.mean if child is not None else 0.0)
 

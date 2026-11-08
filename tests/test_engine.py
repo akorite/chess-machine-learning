@@ -2,6 +2,7 @@ import os
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import chess
@@ -12,9 +13,15 @@ import torch
 from torch import nn
 
 from chessfoundation.config import Preset
-from chessfoundation.data.encode import POLICY_ACTIONS
+from chessfoundation.data.encode import POLICY_ACTIONS, PROMO_PIECES
 from chessfoundation.engine.book import probe_book
-from chessfoundation.engine.gumbel import SearchConfig, search
+from chessfoundation.engine.gumbel import (
+    SearchConfig,
+    _evaluate,
+    _Node,
+    _promotion_choice,
+    search,
+)
 from chessfoundation.engine.model_engine import ModelEngine
 from chessfoundation.engine.tablebase import tablebase_move
 from chessfoundation.engine.time import TimeConfig, allocate
@@ -204,3 +211,106 @@ def test_tablebase_prefers_smaller_dtz_among_wins():
     board = chess.Board("8/8/8/8/8/8/8/KQ5k w - - 0 1")
     move = tablebase_move(board, FakeTablebase())
     assert move is not None and board.is_legal(move)
+
+class SleepingModel(nn.Module):
+    """Each forward sleeps ``delay_s``; exercises wall-clock deadlines and batching."""
+
+    def __init__(self, delay_s: float):
+        super().__init__()
+        self.bias = nn.Parameter(torch.zeros(1))
+        self.delay_s = delay_s
+
+    def forward(self, planes):
+        time.sleep(self.delay_s)
+        batch = planes.shape[0]
+        wdl = torch.zeros(batch, 3)
+        wdl[:, 1] = 10.0
+        return {
+            "policy": torch.zeros(batch, POLICY_ACTIONS) + self.bias,
+            "promo": torch.zeros(batch, 4),
+            "wdl": wdl,
+            "pv": torch.zeros(batch, 6, POLICY_ACTIONS),
+            "moves_left": torch.zeros(batch),
+        }
+
+
+def test_search_respects_wall_clock_deadline():
+    model = SleepingModel(0.011)
+    board = chess.Board()
+    started = time.monotonic()
+    result = search(
+        model, board,
+        SearchConfig(simulations=500, budget_ms=50.0, eval_batch=1),
+        np.random.default_rng(0),
+    )
+    elapsed = time.monotonic() - started
+    assert result.move in board.legal_moves
+    assert result.simulations < 500
+    assert elapsed < 0.10
+
+
+def test_best_move_movetime_bounds_wall_clock():
+    engine = ModelEngine(tiny_model())
+    board = chess.Board()
+    started = time.monotonic()
+    result = engine.best_move(board, movetime_ms=50)
+    elapsed = time.monotonic() - started
+    assert result.simulations >= 1
+    assert elapsed <= 0.10
+
+
+def test_batched_evaluate_matches_per_board():
+    model = tiny_model().eval()
+    boards = [
+        chess.Board(),
+        chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"),
+        chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNBQK1NR w KQkq - 0 1"),
+    ]
+    together = _evaluate(model, boards, "cpu")
+    singles = [_evaluate(model, [b], "cpu") for b in boards]
+    for head in range(4):
+        for j in range(len(boards)):
+            np.testing.assert_allclose(together[head][j], singles[j][head][0], rtol=1e-5, atol=1e-5)
+
+
+def test_promotion_choice_picks_knight():
+    board = chess.Board("6k1/P7/8/8/8/8/8/K7 w - - 0 1")
+    root = _Node(board.copy(stack=False))
+    root.promo = np.zeros(4)
+    root.promo[PROMO_PIECES.index(chess.KNIGHT)] = 9.0
+    assert _promotion_choice(root, chess.A7, chess.A8) == chess.Move.from_uci("a7a8n")
+
+
+class PromoModel(ScriptedModel):
+    def __init__(self, move, promo):
+        super().__init__(move)
+        self.promo = promo
+
+    def forward(self, planes):
+        outputs = super().forward(planes)
+        outputs["promo"] = torch.tensor(self.promo, dtype=torch.float32).repeat(planes.shape[0], 1)
+        return outputs
+
+
+def test_search_returns_underpromotion():
+    board = chess.Board("6k1/P7/8/8/8/8/8/K7 w - - 0 1")
+    promo = np.zeros(4)
+    promo[PROMO_PIECES.index(chess.KNIGHT)] = 9.0
+    model = PromoModel(chess.Move.from_uci("a7a8q"), promo)
+    result = search(model, board, SearchConfig(simulations=8), np.random.default_rng(3))
+    assert result.move == chess.Move.from_uci("a7a8n")
+
+
+def test_batched_leaves_do_more_sims_per_second():
+    model = SleepingModel(0.01)
+    unbatched = search(
+        model, chess.Board(),
+        SearchConfig(simulations=10_000, budget_ms=200.0, eval_batch=1),
+        np.random.default_rng(0),
+    )
+    batched = search(
+        model, chess.Board(),
+        SearchConfig(simulations=10_000, budget_ms=200.0, eval_batch=16),
+        np.random.default_rng(0),
+    )
+    assert batched.simulations >= 2 * unbatched.simulations

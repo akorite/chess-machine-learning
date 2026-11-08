@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -53,6 +54,22 @@ class ModelEngine:
             except OSError as exc:
                 print(f"warning: syzygy disabled for {syzygy_path}: {exc}", file=sys.stderr)
                 self.tablebase = None
+        self.sims_per_ms = self._probe_sims_per_ms()
+
+    def _probe_sims_per_ms(self) -> float:
+        """Measured sims/ms from the real search loop on a fixed position."""
+        started = time.monotonic()
+        result = search(
+            self.model,
+            chess.Board(),
+            SearchConfig(simulations=10_000, budget_ms=50.0, bf16=self.bf16, mode=self.search_mode),
+        )
+        elapsed_ms = (time.monotonic() - started) * 1000.0
+        return result.simulations / max(elapsed_ms, 1.0)
+
+    def recalibrate(self) -> None:
+        """Re-probe at match start; the slower reading sizes the budget."""
+        self.sims_per_ms = min(self.sims_per_ms, self._probe_sims_per_ms())
 
     def best_move(self, board: chess.Board, time_ms: float = 400.0, ply: int = 0, movetime_ms: float | None = None) -> SearchResult:
         book = probe_book(self.book_path, board, self.rng)
@@ -62,12 +79,13 @@ class ModelEngine:
         if probing is not None:
             return SearchResult(probing, 0)
         budget = movetime_ms if movetime_ms is not None else allocate(time_ms, ply, self.time_config)
-        # shortcut: one simulation per millisecond until throughput is measured per accelerator
-        simulations = max(1, min(self.simulations, int(budget)))
+        simulations = max(1, min(self.simulations, int(budget * self.sims_per_ms)))
         return search(
             self.model,
             board,
-            SearchConfig(simulations=simulations, bf16=self.bf16, mode=self.search_mode),
+            SearchConfig(
+                simulations=simulations, bf16=self.bf16, mode=self.search_mode, budget_ms=budget
+            ),
         )
 
     def _setoption(self, parts: list[str]) -> None:
@@ -97,6 +115,7 @@ class ModelEngine:
                 stdout.write("readyok\n")
             elif command == "ucinewgame":
                 board = chess.Board()
+                self.recalibrate()
             elif command == "position":
                 try:
                     board = _parse_position(parts)
