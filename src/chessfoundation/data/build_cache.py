@@ -29,14 +29,11 @@ def lichess_records(
     counts: dict[str, int] | None = None,
 ) -> Iterator[np.ndarray]:
     for row in iter_evals(source, min_depth, min_knodes, deep=True, limit_shards=limit_shards):
+        depth = int(getattr(row, "depth", 0) if hasattr(row, "depth") else (row.get("depth") or 0))
+        if depth < 20:
+            continue
         if counts is not None:
-            depth = int(getattr(row, "depth", 0) if hasattr(row, "depth") else (row.get("depth") or 0))
-            if depth < 20:
-                band = "lt20"
-            elif depth < 24:
-                band = "20to23"
-            else:
-                band = "24plus"
+            band = "20to23" if depth < 24 else "24plus"
             counts[band] = counts.get(band, 0) + 1
             knodes = int(getattr(row, "knodes", 0) if hasattr(row, "knodes") else (row.get("knodes") or 0))
             if knodes >= 100_000:
