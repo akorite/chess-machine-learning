@@ -12,19 +12,21 @@ execution: code
 ## Goal Capsule
 
 - **Objective:** A UCI chess engine backed by a randomly initialized ≤20M-parameter hybrid CNN→Transformer student, distilled from public strong teachers, that wins a 400-game 1+0 match against the L3 pinned Stockfish rung (`UCI_Elo 2400`), stays inside a 110–150 compute-unit (CU) Colab budget, and ships with reproducible Elo, puzzle, and latency numbers.
-- **Means:** layered public data (deep Lichess evaluations, GigaFish, ChessBench, Lc0 chunks, Syzygy) → on-policy distillation from BT5/Stockfish → AVI-style value targets → Gumbel search with INT8 inference (KTD1–KTD11).
+- **Means:** layered public data (deep Lichess evaluations, GigaFish, ChessBench, Lc0 chunks, Syzygy) → on-policy distillation from BT4/Stockfish → AVI-style value targets → Gumbel search with INT8 inference (KTD1–KTD11).
 - **Authority:** this plan; the Product Contract governs behavior, KTDs govern implementation choices. Session-settled directions: chess-native architecture (not an LLM), bounded compute spend, from-scratch student with teachers used only as label sources.
-- **Execution profile:** three stacked PRs — measurement/data, student pretraining and export, distillation and match. The repository is runnable after every merge.
+- **Execution profile:** four stacked PRs — measurement/data, student pretraining and export, distillation and match, plus reliability fixes and scaled retraining (cycle 2). The repository is runnable after every merge.
 - **Stop conditions:** the 150 CU ceiling is reached; a strength gate fails twice after a documented fix; or L3 is proven unreachable, in which case the highest rung beaten is recorded and the run stops.
 - **Finishes the work:** `ce-work` executes the units; the user owns the Colab account and accepts the final rung.
 
-## Execution Status (resumed 2026-11-07, pipeline run)
+## Execution Status (resumed 2026-11-08, improvement cycle)
 
-- **Done:** U1–U11 code landed and committed; 130 tests pass locally; lint clean. Colab session `bench` (L4) uploaded the package and ran the throughput benchmark.
-- **Measured on L4** (`/content/bench.json`, torch 2.14.1+cu130): P6M 4460 pos/s, 12.9ms batch-1; P20M 2089 pos/s, 35.6ms batch-1; training 614 pos/s. P20M batch-1 is above the R3 ≤10ms policy-only target — see Deferred / Open Questions for the unresolved R3 binding decision. The 400ms budget is met via simulation count, not single-eval latency (Assumption on sim counts already anticipates shipping the attainable count).
-- **Remaining (execution, not planning):** provision Stockfish/lc0/BT5 + fastchess (or python-chess runner) on Colab; build caches (U2 commands); pretraining stages A→C (U6); QAT/INT8 export verify (U7); engine verification (U8); on-policy rounds (U10); ladder + non-Stockfish match + report (U11); CU accounting against the 110/150 band.
-- **Match preset rule:** U6 runs at the largest preset whose FP16 batch-1 latency projects under INT8 (÷1.31 per the plan's INT8 anchor) to fit the 32-simulation floor in 400ms: P6M (12.9ms → ~9.8ms → ~314ms for 32 evals) selected; P20M (35.6ms → ~27ms) cannot reach the floor. Re-confirm at U7 with measured INT8 latency; a P20M export that unexpectedly fits is noted, not retrained.
-- **New settled decision:** GPU/match execution runs on Colab via the `colab` CLI with session `bench` (session-settled: user-directed — chosen over local-CPU execution or other clouds: the budget contract is denominated in Colab CU and a live L4 assignment already exists). Governs remaining execution of U5–U11 verification.
+- **Cycle 1 complete (negative result):** U1–U11 executed on Colab L4 (`docs/results/2026-11-07-p6m-colab-l4.md`). P6M `deep.pt` (20k value + 30k deep + 3 distill rounds) played 0/3/97 vs L2 — below the floor. Dominant cause: `go movetime` collapsed to ~1 sim/move, so the net's raw policy played the whole match. Net also undertrained (policy loss ~1.3, high PV loss from zero-initialized PV heads — fixed in cycle-1 review).
+- **Cycle-1 review fixes landed:** movetime→budget mapping, PV head initialization, SSL device, gate bands, PV gate, plus a `throughput` bf16 revert (`1838ef8`, `bf2e582`).
+- **Measured on L4** (torch 2.14.1+cu130): P6M 4460 pos/s, 12.9 ms FP32 batch-1; P20M 2089 pos/s, 35.6 ms; training ~1.5–1.9k pos/s staged. ~9 CU spent of 260; ~250 CU remain — cycle 2 runs inside the unchanged 110–150 CU band.
+- **Cycle 2 (this plan adds U12–U17):** land the residual reliability fixes (wall-clock deadline, oracle hardening, rung/fault handling, cumulative CU), write the distill-round driver that cycle 1 ran ad hoc, scale the P6M student's data and training budget, then re-run the ladder + R10 and report. Fixes land before any re-evaluation (KTD12, KTD13).
+- **Budget (cumulative):** the 110–150 CU band is total-spend, not per-cycle — ~9 CU already consumed leaves ~141 CU ceiling for cycle 2 (the ledger U14 adds reports cumulative vs. band).
+- **Match preset rule (unchanged):** P6M remains the match preset — FP16 batch-1 ~9.8 ms projected INT8 fits 32 sims in 400 ms; P20M cannot. R3 binding is still the user's call (Deferred).
+- **Settled (cycle 1):** GPU/match execution runs on Colab via the `colab` CLI (session-settled: user-directed — the budget contract is denominated in Colab CU).
 
 
 ---
@@ -61,10 +63,11 @@ The result is a teacher→student plan: the student is trained from scratch, but
 
 **Strength and reporting**
 
-- R9. The engine beats the L3 rung (Stockfish `UCI_Elo 2400`, `UCI_LimitStrength=true`) in a 1+0 match of at least 400 games with a 95% interval excluding 50%. L2 (`UCI_Elo 2000`) is the minimum delivery floor, L4 (10k nodes/move) is the stretch, and a sub-floor result is reported as a negative result.
+- R9. The engine beats the L3 rung (Stockfish `UCI_Elo 2400`, `UCI_LimitStrength=true`) in a 1+0 match of at least 400 games with a 95% interval excluding 50%. L2 (`UCI_Elo 2000`) is the minimum delivery floor, N10k (10k nodes/move) is the stretch, and a sub-floor result is reported as a negative result.
 - R10. The engine beats at least one non-Stockfish open-source engine in the same protocol.
 - R11. The final report states the exact match specification (engine build, nodes or time, threads, time control, book, tablebase path) and Elo with intervals, plus puzzle accuracy, policy agreement, latency, and achieved simulations.
 - R12. One command rebuilds the training cache and one command runs the evaluation ladder from a clean checkout.
+- R13. On-policy and AVI labels keep the teacher-quality floor the plan sets (Stockfish depth 22–24 / BT4 64 sims): R6's depth-20 rule binds the deep-label corpus, while oracle labels carry their own stated budgets so no sim↔depth equivalence is invented.
 
 ### Success Criteria
 
@@ -123,13 +126,28 @@ The result is a teacher→student plan: the student is trained from scratch, but
 - KTD2. **Layered data with depth discipline.** Self-supervised board pretraining on Lichess games; value pretraining on GigaFish depth 10 and ChessBench state values; deep fine-tune on Lichess evaluations filtered to `depth ≥ 24` or `knodes ≥ 100k`; Lc0 v6 chunks for policy visits and `plies_left`.
 - KTD3. **PV heads from free data.** The Lichess evaluation rows carry `line` (principal variation). Six auxiliary heads predict the next six plies, giving multi-token lookahead without generating anything.
 - KTD4. **AVI-style value targets.** For each sampled position, evaluate legal successors with the teacher and train `max(−V)`; one-step negamax produces more accurate values than MCTS-generated targets at lower cost.
-- KTD5. **Gumbel search with sequential halving.** Guaranteed policy improvement at low simulation counts, where PUCT plateaus. Simulations scale from 5k to 30k with the measured INT8 throughput and the clock.
+- KTD5. **Gumbel search with sequential halving.** Guaranteed policy improvement at low simulation counts, where PUCT plateaus. Sims scale with measured sims-per-ms within the 400ms budget — floor 32 at the match preset (KTD21 states the honest ~30–40 operating point; the published 1k–100k sim anchors are external reference points, not the plan's range).
 - KTD6. **INT8 QAT and ONNX/TensorRT.** Quantisation-aware training plus an exported inference graph; every doubling of evaluations is ~81 Elo, so this is a strength feature.
 - KTD7. **On-policy distillation rounds.** The student plays; the teacher labels the positions the student actually reaches; the student is retrained. Three rounds, gated by match score.
 - KTD8. **Opening book.** Polyglot book built from TCEC/CCC and Lc0 games, capped at 10–12 plies, used in match play and for opening diversity.
 - KTD9. **Syzygy 5-piece.** ~939MB fits the VM disk; used to probe endgames and to supply perfect WDL/DTZ labels for an endgame curriculum. 6-piece (150GB) and 7-piece (18TB) are out.
 - KTD10. **Match strength is the only acceptance metric.** Loss, puzzle accuracy, and policy agreement are diagnostics; they cannot ship a checkpoint on their own.
 - KTD11. **Prior-directed regulariser, not puzzle RL.** Forward-KL to the teacher's prior during any self-play stage; puzzle reward only as a small auxiliary signal with a Stockfish near-equal-move check.
+- KTD12. **Wall-clock deadlines govern every simulated budget.** Simulation counts derived from `movetime`/clock are targets, not guarantees: the search loop checks elapsed wall-clock each iteration and the engine never returns late. Cycle 1 proved sim-count mapping is fragile — this makes lateness impossible regardless of mapping.
+- KTD13. **Reliability fixes precede any cycle-2 evaluation or training.** The ladder is only re-run after engine/oracle fixes land; otherwise strength changes are confounded by the same measurement bugs that produced cycle 1's number.
+- KTD14. **Scale P6M, not P20M.** The improvement is bought with data and steps at the same preset (more deep-label shards, longer deep stage, more distill rounds at higher sims). P20M stays out: its batch-1 latency cannot fit 32 sims in the 400ms budget (match-preset rule), and ~81 Elo/visit-doubling is the cheaper axis.
+- KTD15. **Sim count is a verification input, not an assumption.** The cycle-2 report records achieved sims/move from search telemetry; the eval is invalid below the protocol's sim floor.
+- KTD16. **"Train longer" = continue P6M `deep.pt` on an appended corpus.** One run, one preset: `--init deep.pt` (old weights, fresh optimizer at step 0) against the enlarged deep set. Not a warm resume — the corpus changes, so step offsets and the cosine schedule reset deliberately. (session-settled: user-directed — "improve" the same student, not retrain or switch presets.)
+- KTD17. **QAT stays simulated; "INT8" means the torch export path.** The ONNX graph is FP-only today and TensorRT-INT8 needs a calibrator that does not exist. Cycle-2 acceptance: QAT-fake-quant checkpoint + `quant.verify` agreement ≥0.99 + ONNX-FP export executed against PyTorch for move agreement. Building a real INT8/TensorRT artifact is deferred — it cannot fit inside the CU band with the rest of the cycle.
+- KTD18. **Sims = `budget_ms` × measured sims-per-ms.** `ModelEngine` calibrates sim throughput at startup and again at match start (KTD24), converts the clock budget to a simulation target, and the wall-clock deadline (KTD12) makes it a ceiling, not an override. The ladder asserts median achieved sims ≥ floor from PGN `info nodes` (KTD15).
+- KTD19. **Loss attribution is measured, not impressionistic.** `eval/report.py` replays student losses through the existing Stockfish oracle and counts oracle-flagged blunders by ply bucket (opening/tactics/endgame), so "still undertrained" is distinguishable from "regressed" in the report — an inline pass, not a new script.
+- KTD20. **R10 opponent re-pinned to an attainable non-Stockfish rung.** Koivisto 9.0 (~3300, structurally unwinnable at these sims) is replaced by Maia-3 1900 — or the strongest non-Stockfish pinned binary fitting the ~1 CU match cost at execution. A pinned Stockfish cannot satisfy R10.
+- KTD21. **The cycle-2 operating point is ~30 sims, not the anchors' 1k+.** At ~1 eval/sim and ~10–13ms/eval, the 400ms budget buys ~30 sims — 30× below the lowest published anchor (2,823 @ 1k). L3 (SF-2400) remains the target but the honest expectation at this operating point is L2-adjacent strength; the engine's real lever is batched leaf evaluation (U12), which multiplies evals per sim budget before any weights improve. The report frames the result against achieved sims, not the 1k-sim anchors.
+- KTD22. **The cycle-2 ladder runs the real 1+0 protocol.** `go wtime/btime` with a ~400ms/move average (R9), not `--movetime 50` — a 50ms cap allows ~4 sims and invalidates the eval. `--movetime` exists for smoke coverage only.
+- KTD23. **A post-fix baseline match precedes the scaled retrain.** A 100-game L2 match on the repaired engine with the pre-U16 checkpoint separates the fix effect from the training effect; otherwise a cycle-2 number cannot attribute improvement.
+- KTD24. **Per-sim calibration, not per-eval.** The startup probe runs the real search loop on a fixed position (~50ms) and counts completed sims; `sims_per_ms` then includes tree overhead that raw eval timing misses. On a shared VM the probe re-runs at match start; the lower of the two readings sizes the budget.
+
+- KTD25. **`deep.pt` persistence is a U16 precondition.** The continue-in-place path (KTD16) needs the cycle-1 checkpoint off the ephemeral VM. U16's first step checks for `deep.pt` locally or on the VM; if absent, the unit re-uploads from wherever cycle 1 saved it or falls back to the recorded restart path (reported, not silent).
 
 ### High-Level Technical Design
 
@@ -155,7 +173,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  P[Via P6M recipe check] --> Q[P20M pretrain]
+  P[Via P6M recipe check] --> Q[Student pretrain (match preset P6M)]
   Q --> R[Deep-label fine-tune]
   R --> S[On-policy round 1]
   S --> T[On-policy round 2]
@@ -164,21 +182,34 @@ flowchart TB
   V --> W{beat L2?}
   W -->|yes| X{beat L3?}
   W -->|no| Y[record floor, stop]
-  X -->|yes| Z[attempt L4]
+  X -->|yes| Z[attempt N10k]
   X -->|no| Y2[report L3 reached]
+```
+
+Cycle-2 ordering (fixes gate everything; scale and eval run in that order):
+
+```mermaid
+flowchart TB
+  U12[U12 engine deadline + underpromotion] --> U13[U13 oracle + fault isolation]
+  U13 --> U14[U14 book/rungs/CU ledger/metrics/shard verify]
+  U14 --> U15[U15 distill driver + round gate]
+  U14 --> U16[U16 append corpus + QAT-resume]
+  U15 --> U17[U17 ladder + R10 + loss attribution + report]
+  U16 --> U17
+  U12 --> U17
 ```
 
 ### Assumptions
 
 - The Colab account keeps its balance and L4/G4 entitlements; H100 stays unavailable.
 - The Lichess evaluation dataset yields enough rows at depth ≥24 to fine-tune; U2 measures the surviving count before U6 launches.
-- BT5 runs under Lc0 with CUDA on an L4 within memory limits and can be driven through UCI for labeling.
-- Gumbel search at 5k–30k simulations fits 400ms once INT8 throughput is measured; if not, the engine ships at the highest attainable simulation count and reports it.
+- The `BT4-1024x15x32h-swa-6315000.pb.gz` teacher runs under Lc0 with CUDA on an L4 within memory limits and can be driven through UCI for labeling (BT5 absent from the contrib index — the deferred entry names it).
+- Gumbel search at the attainable sim count within 400ms (floor 32, honest ~30–40 at FP — KTD21) once batched-leaf throughput is measured; the engine ships at the highest attainable count and reports it.
 - A 6–20M distilled student lands in the 3,000–3,300 engine-Elo band based on the efficient-self-play and Chessformer anchors.
 
 ### Dependencies / Prerequisites
 
-- `uv`, Python 3.11+, `torch` 2.x with CUDA, `python-chess`, `fastchess`, a built Stockfish, `lc0` (CUDA build), and the BT5/BT4 weights file.
+- `uv`, Python 3.11+, `torch` 2.x with CUDA, `python-chess`, `fastchess`, a built Stockfish, `lc0` (CUDA build), and the `BT4-1024x15x32h-swa-6315000.pb.gz` weights file.
 - Hugging Face account and token for datasets and checkpoint storage; Colab disk for caches.
 - Syzygy 3–4–5-piece set (~939MB) and a Polyglot book builder.
 
@@ -200,8 +231,31 @@ flowchart TB
 - **Continue a released ChessBench checkpoint.** Rejected: decoder-only token models, contradicting the encoder direction; conversion cost with no pipeline benefit.
 - **Pure square-token transformer.** Rejected for the student after the Gigafish evidence that hybrid beats pure ViT at small scale; retained as the ablation arm.
 - **AlphaZero self-play from scratch.** Rejected on compute; the budget is smaller than one meaningful self-play run.
+- **Retrain P20M from scratch.** Rejected for cycle 2 (KTD14): batch-1 latency cannot fit 32 sims in the 400ms budget, and a new run pays the full pretraining cost again. P20M remains available for a later cycle whose eval runs on INT8+TensorRT.
+- **Restart P6M from scratch on the enlarged corpus.** Rejected as wasteful: `deep.pt`'s 50k steps are reusable weights, and the corpus change appends (KTD16). Kept as the fallback if continuing produces a loss regression at the stage gate.
 
 ---
+### Unit Index
+
+| U | Unit | Files (primary) | Depends on |
+|---|---|---|---|
+| U1 | Scaffold, config, budget guard | `config.py`, `budget.py` | — |
+| U2 | Dataset loaders, depth filter, cache | `data/*` | U1 |
+| U3 | Tournament harness, ladder, calibration | `eval/*` | U1 |
+| U4 | Hybrid student model + heads | `model/*` | U1,U2 |
+| U5 | Training loop, throughput, resume | `train/*` | U2,U4 |
+| U6 | Pretraining + deep-label fine-tune | `train/pretrain.py` | U2,U3,U5 |
+| U7 | INT8 QAT + ONNX/TensorRT export | `quant/*` | U4,U6 |
+| U8 | UCI engine: policy, Gumbel, book, TB | `engine/*` | U4,U6,U7 |
+| U9 | Teacher labeling pipeline + AVI | `teacher/*`, `distill/*` | U2,U8 |
+| U10 | On-policy distill rounds + prior-KL | `distill/*` | U6,U9 |
+| U11 | Ladder + final report | `eval/report.py` | U3,U8,U10 |
+| U12 | Engine: wall-clock deadline + underpromotion | `engine/gumbel.py`, `engine/model_engine.py` | U8 |
+| U13 | Oracle hardening + fault isolation | `teacher/*`, `eval/tournament.py` | U12 |
+| U14 | Eval/budget correctness (book, rungs, CU ledger, metrics, shard verify) | `eval/ladder.py`, `budget.py`, `data/build_cache.py` | U3 |
+| U15 | Distill driver CLI + round gate + reanalysis | `distill/rounds.py`, `train/loop.py`, `train/checkpoint.py` | U9,U12,U14 |
+| U16 | Scale student: append corpus + QAT-resume + continue deep | `data/build_cache.py`, `train/pretrain.py`, `train/checkpoint.py` | U9,U14 |
+| U17 | Cycle-2 eval: ladder+R10, loss attribution, report | `eval/*` | U12–U16 |
 
 ## Implementation Units
 
@@ -378,7 +432,7 @@ flowchart TB
 - **Dependencies:** U2, U8
 - **Files:** `src/chessfoundation/teacher/lc0_oracle.py`, `src/chessfoundation/teacher/stockfish_oracle.py`, `src/chessfoundation/teacher/avi.py`, `tests/test_oracle.py`, `tests/test_avi.py`
 - **Approach:**
-  - Lc0 oracle through UCI: load BT5, request MultiPV and PV at a fixed node budget (64 sims), parse visit distributions and WDL.
+  - Lc0 oracle through UCI: load `BT4-1024x15x32h-swa-6315000.pb.gz`, request MultiPV and PV at a fixed node budget (64 sims), parse visit distributions and WDL.
   - Stockfish oracle at depth 22–24 for tactical verification and for re-labeling positions the student reaches.
   - AVI targets: for sampled positions, evaluate legal successors with the oracle and record `max(−V)`; fall back to top-k successors when the oracle rate would blow the CU line.
   - Every labeled position records which oracle, budget, and depth produced it.
@@ -416,8 +470,8 @@ flowchart TB
 - **Files:** `src/chessfoundation/eval/report.py`, `docs/results/README.md`, `tests/test_report.py`
 - **Approach:**
   - Ladder data: L2 (`UCI_Elo 2000`), L3 (`2400`), N10k (10k nodes/move), full strength; climb on the interval rule.
-  - 400-game primary match at 1+0 with the book; policy-only and searched variants both measured on the final rung; SFT vs post-RL delta reported.
-  - Opponent set: pinned Stockfish rungs plus one alpha-beta engine for R10.
+  - 400-game primary match at 1+0 with the book; policy-only and searched variants both measured on the final rung; stage-C `deep.pt` vs post-distill-round checkpoint delta reported.
+  - Opponent set: pinned Stockfish rungs plus one non-Stockfish open-source engine for R10.
   - Report records binaries, options, book, tablebase path, achieved simulations, intervals, puzzle accuracy, and latency.
 - **Test scenarios:**
   - Unpinned engine version fails ladder validation.
@@ -425,6 +479,123 @@ flowchart TB
   - SFT and post-RL scores appear for the same protocol.
   - A sub-floor run is reported as a negative result.
 - **Verification:** Ladder runs end to end and writes the report.
+
+### PR4: Reliability fixes and scaled retraining (cycle 2)
+
+**Waits on:** PR1–PR3 (already merged). Executes fully before any cycle-2 evaluation.
+
+### U12. Engine: wall-clock deadline + underpromotion + batched leaves
+
+- **Goal:** The engine cannot return late regardless of how clock time maps to sims, every promotion is reachable, and the search evaluates leaves in batches so the 400ms budget buys the sims the anchors assume.
+- **Requirements:** R3, R4 (KTD12, KTD18, KTD21, KTD24)
+- **Dependencies:** U8
+- **Files:** `src/chessfoundation/engine/gumbel.py`, `src/chessfoundation/engine/model_engine.py`, `src/chessfoundation/engine/time.py`, `tests/test_engine.py`
+- **Approach:**
+  - `search()` captures `time.monotonic()` once; the loop checks the clock every iteration and exits when budget is spent — `budget_ms × measured sims-per-ms` (KTD24) is the cap, the wall clock is the backstop.
+  - `ModelEngine` runs a per-sim calibration probe at startup and again at match start (KTD24): the real search loop on a fixed position for ~50ms, count completed sims; `sims_per_ms` converts any `go` budget to a sim target. Lower of the two readings sizes the budget.
+  - **Batched leaf evaluation:** pending leaf expansions collect into one batch per iteration instead of one `_evaluate` call per leaf — the mechanism that moves evals/s toward the published anchors' regime (KTD21). Batch size bounded by device memory; fall back to sequential when the batch is one.
+  - The `promo` head's 4-way choice is reachable through `_best_move`/`_promotion_choice`: under-promotions (N/B/R) route by promo index rather than folding into the queen-only fallback; gumbel children enumerate under-promotion moves.
+  - `throughput.measure` calls `torch.cuda.synchronize()` after the timed loop so CUDA timings are real.
+- **Test scenarios:**
+  - `search()` with a 50ms deadline on a slow mock model returns a legal move with `elapsed < deadline + eval_cost`.
+  - `best_move` with `movetime_ms=50` produces `simulations ≥ 1` and `elapsed ≤ ~2×movetime`.
+  - Batched `_evaluate` returns identical results to per-leaf calls on the same board set (batch-of-N vs N singles).
+  - `_promotion_choice` returns a knight promotion for a position where only N promotes; search can pick it when it is the best move.
+  - A mock model that sleeps 10ms/eval does not run past the deadline even when `simulations` is set high.
+- **Verification:** UCI `go movetime 50` returns a legal move in ≤100ms wall-clock; `go wtime 1000 btime 1000` never exceeds the allocated budget; achieved sims > 1; batched search's sims/sec ≥ 2× the unbatched rate on the same position.
+### U13. Oracle hardening + fault isolation
+
+- **Goal:** A stalled or crashing teacher/opponent cannot hang the round or forfeit a match mid-run; malformed engine output is a clean error, not a crash or a silent label.
+- **Requirements:** R9, R10 (KTD13)
+- **Dependencies:** U12
+- **Files:** `src/chessfoundation/teacher/lc0_oracle.py`, `src/chessfoundation/eval/tournament.py`, `tests/test_teacher.py`, `tests/test_tournament.py`
+- **Approach:**
+  - Bound the analyse call itself — `SimpleEngine.analyse` takes no `timeout` kwarg and `engine.timeout` never engages for `Limit(nodes=)`/`Limit(depth=)` calls. Wrap the call in a bounded wait (`asyncio.wait_for`/`concurrent.futures` with `timeout_s`, or add a `Limit(time=timeout_s)` backstop to the nodes/depth limit); a stalled engine raises a typed `OracleTimeout`.
+  - Missing/empty `infos`, absent `score`, or `cp`/`mate` edge cases raise `OracleError` with the board FEN attached — labeling skips the position rather than emit a wrong record.
+  - `tournament.run_local` catches engine-process exceptions per game, records the game as a forfeit (fault type in the match notes), and continues rather than propagating mid-match.
+- **Test scenarios:**
+  - A mock engine that sleeps past `timeout_s` raises `OracleTimeout`; a mock returning `{}` infos raises `OracleError` carrying the FEN.
+  - `run_local` where the engine dies on game 3 records games 1–2, forfeits 3+ with the fault noted, and returns a `MatchResult`.
+  - `label_positions` drops oracle-failed positions and reports the skipped count.
+- **Verification:** A 100-position labeling run with a deliberately killed Stockfish completes with skipped positions counted, no traceback.
+
+### U14. Eval/budget correctness: book wiring, nodes rung, CU ledger, metrics, shard verify
+
+- **Goal:** The match protocol the plan specifies (book, pinned rungs, node limits) is the protocol that actually runs; CU spend is cumulative; artifacts and shard integrity are verifiable.
+- **Requirements:** R7, R8, R9, R11, R12 (KTD13, KTD18)
+- **Dependencies:** U3
+- **Files:** `src/chessfoundation/eval/ladder.py`, `src/chessfoundation/eval/tournament.py`, `src/chessfoundation/budget.py`, `src/chessfoundation/data/build_cache.py`, `src/chessfoundation/data/cache.py`, `src/chessfoundation/train/pretrain.py`, `tests/test_ladder.py`, `tests/test_budget.py`, `tests/test_cache.py`
+- **Approach:**
+  - `ladder --book` plumbs into `MatchConfig` as `openings`; every match game starts from a book position with alternating colours, as KTD8 already specifies.
+  - Nodes rungs express as `Limit(nodes=N)` in `run_local`, not a `{"Nodes": N}` option — `Rung.nodes` drives the per-game limit while `uci_elo` rungs keep `UCI_LimitStrength` (fixes the unrunnable N10k rung).
+  - `budget` keeps a cumulative `used_cu` ledger (JSON at a stable path): each `check_run` writes the post-run balance, so per-phase and total spend survive VM loss and report accurately.
+  - `pretrain --out` writes `<out>.metrics.json` alongside the checkpoint (the file `gates.main` requires), removing the hand-copied step.
+  - `ShardDataset` verification treats an unlisted `shard-*.bin` as a failure (stray-file guard); `build()` writes the manifest incrementally after each shard so a mid-build crash leaves a resumable prefix (U16's append path builds on this).
+  - `fastchess_command` emits `st={movetime_ms / 1000.0}` (seconds, not milliseconds) or an explicit `tc=` time control — the current code would give each side ~50s/move in a match meant to take ~50ms.
+  - `run_local` captures per-move engine info (`engine.play(..., info=INFO_ALL)` or PGN comment annotation) so `info nodes` is recorded — the sims-floor verification (KTD15) reads it from match PGNs.
+- **Test scenarios:**
+  - `ladder --book book.bin` produces games whose PGN opening lines come from the book, colours alternating.
+  - A `nodes=10_000` rung issues `go nodes 10000` on the wire (mock engine records the command) instead of setting a `Nodes` option.
+  - Two `check_run` calls accumulate `used_cu` in the ledger; a restart reloads it.
+  - `pretrain --out x.pt` also writes `x.metrics.json`; `ShardDataset` rejects a directory containing a shard absent from the manifest.
+  - `fastchess_command` emits `st=0.05` (seconds) for a 50ms/move match — a `st=` value interpreted as seconds, not the ms literal.
+  - Match PGNs contain per-move node counts (info annotation), readable by the report's sims check.
+- **Verification:** A 4-game ladder on a mock book uses book openings; a nodes-rung mock match validates and plays; ledger file exists and survives a second run.
+
+### U15. Distill driver + round gate + reanalysis
+
+- **Goal:** On-policy rounds are a single CLI command end-to-end (play → label → retrain → gate) instead of ad-hoc Colab cells, with the plan's round-improvement gate enforced and replay labels refreshed.
+- **Requirements:** R9 (KTD13); completes U10's unfinished wiring
+- **Dependencies:** U9, U12, U14
+- **Files:** `src/chessfoundation/distill/rounds.py`, `src/chessfoundation/distill/replay.py`, `src/chessfoundation/distill/__main__.py` (the `python -m chessfoundation.distill` entry the contract requires), `src/chessfoundation/train/loop.py`, `src/chessfoundation/train/checkpoint.py`, `tests/test_rounds.py`
+- **Approach:**
+  - `python -m chessfoundation.distill` (`distill/__main__.py`) wires `play_and_collect` → oracle `analyse` → `label_positions` → `run_round` → save checkpoint; CLI flags for engine paths, sims, games, output dir, replay dirs. The collection loop reuses U13's fault-isolated game loop rather than a second unguarded copy.
+  - Positions are collected *with the fixed search* (U12's real sim count, not the 1-sim bug) — cycle-2 labels come from positions the repaired engine reaches.
+  - `replay.reanalyse` runs each round: the replay sample is re-labeled with the **external teacher oracle** (Stockfish/BT4 at the stated budgets, matching R13 — not the student checkpoint) before retraining so stale labels don't persist. Labeling cost counts against the `labels`/`distillation` CU allocation.
+  - `prior_kl` joins `loop.train`'s loss as the forward-KL regulariser KTD11 specifies (weight from `TrainConfig`, default small).
+  - Round gate: the round's match score vs. the current rung must improve or hold vs. the previous round; a regression drops the round checkpoint and records it, per U10.
+- **Test scenarios:**
+  - `distill` end-to-end on a mock engine produces a shard, a checkpoint, and a round-record JSON.
+  - `reanalyse` replaces labels for positions whose teacher value moved.
+  - `prior_kl` loss is ≥0 and zero at initialization against the teacher prior.
+  - A gated round that regresses match score leaves the previous checkpoint as current.
+- **Verification:** One 2-game distill round runs end-to-end on CPU or mock; the driver is the same path Colab runs.
+
+### U16. Scale student: appended corpus, QAT-resume order, continued deep stage
+
+- **Goal:** A larger deep-label corpus built without destroying the existing 160 shards, a resumable QAT stage, and a continued `deep.pt` trained longer on the enlarged set.
+- **Requirements:** R5, R6, R7, R8 (KTD14, KTD16, KTD17)
+- **Dependencies:** U9, U14
+- **Files:** `src/chessfoundation/data/build_cache.py`, `src/chessfoundation/data/cache.py`, `src/chessfoundation/train/pretrain.py`, `src/chessfoundation/train/checkpoint.py`, `tests/test_cache.py`, `tests/test_pretrain.py`
+- **Approach:**
+  - `build()` gains an append mode: shards continue past the existing max index, the manifest is rewritten covering old + new — no `clear_shards` when appending. U14's incremental manifest writes make a crashed build resumable.
+  - `pretrain` applies `prepare_qat` before `load(resume)`, or stores checkpoints unwrapped — whichever is smallest — so a mid-QAT checkpoint resumes. The SSL stage gets the same resume path as the others.
+  - Continue training: `--init deep.pt` (weights only, step 0) with `--stage deep` on the enlarged corpus, `--steps` sized to the `pretrain` phase allocation — not `--resume` (KTD16). Order of 30–60k additional steps depending on phase budget and corpus size; the exact count is chosen at execution by `check_run`. `--save-every` is set so worst-case lost work is ≤15 minutes at the measured step rate (≈2,500 steps at ~3 steps/s), satisfying R8.
+  - Precondition (KTD25): `deep.pt` must be reachable — check the VM `/content/checkpoints/` first; if absent, re-download/upload it before any corpus work. If unrecoverable, the unit falls back to the recorded restart path and the report states that.
+- **Test scenarios:**
+  - `build(..., append=True)` with new shards leaves existing shards intact and produces a manifest covering both sets.
+  - A checkpoint saved mid-QAT stage `--resume`s successfully (keys match after the ordering fix).
+  - `--init deep.pt --stage deep` starts at step 0 and consumes records from the enlarged corpus; `--save-every` writes every N steps.
+- **Verification:** Appended cache verifies; a crashed-at-halfway build resumes rather than wipes; QAT-resume round-trips.
+
+### U17. Cycle-2 evaluation: ladder + R10, loss attribution, honest report
+
+- **Goal:** A defensible strength number for the improved student, with achieved sims verified and losses attributed — or an honest negative result.
+- **Requirements:** R9, R10, R11 (KTD15, KTD18, KTD19, KTD20)
+- **Dependencies:** U12, U13, U14, U15, U16
+- **Files:** `src/chessfoundation/eval/ladder.py`, `src/chessfoundation/eval/tournament.py`, `src/chessfoundation/eval/report.py`, `docs/results/README.md`, `tests/test_report.py`
+- **Approach:**
+  - **Post-fix baseline first (KTD23):** a 100-game L2 match on the repaired engine with the pre-U16 checkpoint runs *before* the scaled retrain completes, so the report separates the fix effect from the training effect.
+  - The ladder runs the real R9 protocol (KTD22): `--book` + 1+0 clock (~400ms/move average) with the calibrated engine; `--movetime` is smoke coverage only. The report populates `simulations` from PGN `info nodes` (assert median ≥ floor — KTD15/KTD18).
+  - R10 opponent: Maia-3 1900 (KTD20) — replaces Koivisto; no Stockfish proxy.
+  - Loss attribution is inline in `eval/report.py`: replay student losses through the existing Stockfish oracle and count oracle-flagged blunders (opening/tactics/endgame via ply buckets) — no separate script (KTD19 sized to the report's own pass).
+  - Report records actual sims/move, book usage, opponent binaries/options, CU ledger totals vs the 110–150 band, and the post-fix-baseline vs post-scale delta.
+  - If the ladder still loses: stop after one more documented-config run; report highest rung beaten + loss attribution (the "done" rule the spec was missing).
+- **Test scenarios:**
+  - `render(..., simulations=median)` prints the achieved sims; a PGN whose `info nodes` is missing yields `None`, not a crash.
+  - The inline blunder pass on a small PGN produces classification counts.
+  - A mock negative-ladder run writes a negative-result report line with attribution.
+- **Verification:** Cycle-2 run on Colab produces a results doc with sims verified ≥ floor under the 1+0 protocol; every reported match lists protocol and interval; baseline vs post-scale delta is stated; CU ledger reconciles with `colab usage`.
 
 ---
 
@@ -435,13 +606,20 @@ flowchart TB
 | Unit tests | `uv run pytest -q` | all pass |
 | Lint | `uv run ruff check .` | clean |
 | Install | clean-venv install plus UCI handshake | entry point starts and returns a legal move |
-| Cache integrity | `uv run python -m chessfoundation.data.build_cache --verify` | checksums match; deep-set count reported |
+| Cache integrity | `uv run python -m chessfoundation.data.build_cache --verify --out <cache-dir>` | checksums match; deep-set count reported |
 | Throughput gate | `uv run python -m chessfoundation.train.throughput --preset p20m --accelerator L4` | projected run ≤ phase allocation; latency recorded |
-| Pretrain gate | `uv run python -m chessfoundation.train.gates --checkpoint <path>` | value MAE and PV accuracy improve per stage |
-| Quantization | `uv run python -m chessfoundation.quant.verify --checkpoint <path>` | ≥99% move agreement; latency lower |
-| Engine | `uv run python -m chessfoundation.engine.time --preset p6m` | policy-only latency recorded vs R3 bound; ≥32 sims in 400ms |
-| Match | `uv run python -m chessfoundation.eval.ladder --config <ladder>` | score interval excludes 50% at the claimed rung |
+| Pretrain gate | `uv run python -m chessfoundation.train.gates --checkpoint <path> --data <cache> [--previous <metrics.json>]` | value MAE and PV accuracy improve per stage |
+| Quantization | `uv run python -m chessfoundation.quant.verify --reference <fp ckpt> --candidate <qat ckpt> --data <cache>` | ≥99% move agreement; latency lower |
+| Engine | `uv run python -m chessfoundation.engine.model_engine --preset p6m` (policy-only) | policy-only latency recorded vs R3 bound; ≥32 sims in 400ms |
+| Match | `uv run python -m chessfoundation.eval.ladder --engine <uci> --opponent <uci> --book <book>` | score interval excludes 50% at the claimed rung |
 | Budget | `colab usage` before and after each GPU run | cumulative ≤150 CU, per-phase respected, target band 110–150 reported |
+| Cycle-2 search clock | `uv run pytest tests/test_engine.py -k deadline` | deadline honored; sims > 1 at movetime 50 |
+| Book in match protocol | `ladder --book` on a mock book | PGNs start from book lines, colours alternate |
+| Nodes rung | mock `go nodes` wire check | rung validates and plays via `Limit(nodes=)` |
+| CU ledger | `budget` ledger file after 2+ runs | cumulative `used_cu` survives restart; reconciles with `colab usage` |
+| QAT resume | `pretrain --stage deep --qat --resume <ckpt>` | mid-QAT checkpoint resumes, keys match |
+| Distill driver | `python -m chessfoundation.distill` 2-game mock run | shard + checkpoint + round record emitted |
+| Sims floor | PGN `info nodes` parse in report | median achieved sims ≥ floor; report prints them |
 
 ---
 
@@ -452,6 +630,9 @@ flowchart TB
 - Total Colab spend stays within the 110–150 CU band and respects the per-phase allocation; the report states actual spend against the 110 target.
 - Failed experiments and scratch notebooks are deleted.
 - The report states the achieved rung, the pinned configuration, the achieved simulations, and the gap to the next rung; a sub-L2 result is reported as a negative result.
+- Cycle-2 (U12–U17) units complete: engine respects the clock, matches run the specified protocol (book, pinned/node rungs), the distill driver exists, and the improved `deep.pt` is the evaluated checkpoint.
+- The cycle-2 report states achieved sims/move from PGN telemetry (not assumed), book usage, opponent binaries/options, and loss attribution; a still-negative ladder reports highest rung beaten and stops after one documented-config retry.
+- The cumulative CU ledger reconciles with `colab usage` and stays within the 110–150 CU band.
 
 
 ---
@@ -461,7 +642,8 @@ flowchart TB
 From 2026-11-07 doc review:
 
 - **R3 binding (product decision):** R3's ≤10ms policy-only bound does not name which artifact (FP16 PyTorch vs INT8 export) or preset it applies to. Measured FP16 batch-1 latency is 35.6ms (P20M) and 12.9ms (P6M) — both above the bound as literally written. Execution proceeds per the match-preset rule and records attained latency; whether R3 binds the INT8 export or is re-baselined to measured FP16 remains the user's call.
-- **R10 opponent:** which non-Stockfish open-source engine plays the R10 match is unrecorded (U11 says "one alpha-beta engine"). Execution default: Maia-3 5M, already the U3 calibration reference, unless a stronger alpha-beta binary is available on Colab.
+- **R10 opponent (cycle-2 settled):** Maia-3 1900 or the strongest attainable-pinned binary under ~1 CU (KTD20) — replaces Koivisto 9.0, which was structurally unwinnable at these sims.
+- **INT8 (cycle-2 settled):** QAT stays simulated; acceptance is the torch checkpoint + agreement ≥0.99 + ONNX-FP agreement (KTD17). Real INT8/TensorRT is deferred — no calibrator/Q-DQ exists and it cannot fit the CU band with the rest of the cycle.
 - **Teacher weights (execution substitution):** the plan names BT5-1024x15x32h-rpe as the lc0 teacher; the lczero `networks-contrib/big-transformers/` index carries no BT5 file — `BT4-1024x15x32h-swa-6315000.pb.gz` (same 1024x15x32 family, latest SWA) is the teacher in use. Report names the actual file; if BT5 appears later it is a drop-in swap.
 
 
@@ -474,6 +656,7 @@ From 2026-11-07 doc review:
 | Colab balance at planning time | 261.83 CU |
 | L4 / A100 / G4 rate | 1.94 / 8.67 / 10.05 CU per hour |
 | Plan allocation | 110 CU target, 150 CU ceiling (data 8, throughput 4, pretrain 45, teacher labeling 12, distillation rounds 10, QAT/export 4, match/search A/B 8, contingency 8 = 99 committed; headroom 51) |
+| Cycle-2 allocation (within the same cumulative band) | post-fix baseline ~2, corpus append ~4–6 (data), continued deep ~15–25 (pretrain), distill rounds ~8–10, ladder+R10+attribution ~4–6, contingency ~8 → ~45 CU committed of ~141 remaining |
 | Student presets | P6M (d=256, 8 blocks), P20M (d=384, 12 blocks), hybrid stem |
 | Teacher | Lc0 BT4 (`BT4-1024x15x32h-swa-6315000.pb.gz`, latest SWA — BT5 absent from the contrib index) at 64 sims; Stockfish depth 22–24 |
 | Deep-label filter | `depth ≥ 24` or `knodes ≥ 100k` |
