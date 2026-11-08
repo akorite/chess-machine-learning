@@ -48,6 +48,7 @@ class TrainConfig:
     qat: bool = False
     compile: bool = False
     seed: int = 0
+    prior_kl_weight: float = 0.05
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ from torch import nn
 
 from ..config import TrainConfig
 from ..data.encode import MOVES_LEFT_UNKNOWN, planes_from_bits_batch
+from ..distill.prior_kl import prior_kl
 
 LOSS_WEIGHTS = {"policy": 1.0, "promo": 0.2, "wdl": 1.0, "pv": 0.5, "moves_left": 0.1}
 PV_PLIES = 6
@@ -37,7 +38,11 @@ def batch_from_records(records: Sequence[np.ndarray]) -> dict[str, torch.Tensor]
     }
 
 
-def compute_loss(outputs: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, float]]:
+def compute_loss(
+    outputs: dict[str, torch.Tensor],
+    batch: dict[str, torch.Tensor],
+    prior_kl_weight: float = 0.0,
+) -> tuple[torch.Tensor, dict[str, float]]:
     policy_logp = outputs["policy"].log_softmax(-1)
     weights = batch["policy_prob"]
     has_policy = (weights.sum(-1) > 0).float()
@@ -72,12 +77,27 @@ def compute_loss(outputs: dict[str, torch.Tensor], batch: dict[str, torch.Tensor
     ml_target = batch["moves_left"].clamp(max=MOVES_LEFT_UNKNOWN - 1) / 100.0
     ml_loss = ((outputs["moves_left"] - ml_target) ** 2 * ml_mask).sum() / ml_mask.sum().clamp(min=1)
 
+    # Forward KL to the teacher prior over the recorded top-8 support (KTD11),
+    # computed on labeled rows only — unlabeled rows have no meaningful prior.
+    labeled = has_policy.bool()
+    if labeled.any():
+        support = torch.zeros_like(outputs["policy"], dtype=torch.bool)
+        support.scatter_(1, batch["policy_idx"], batch["policy_prob"] > 0)
+        teacher_logits = torch.zeros_like(outputs["policy"], dtype=torch.float32)
+        teacher_logits.scatter_(
+            1, batch["policy_idx"], batch["policy_prob"].float().clamp(min=1e-9).log()
+        )
+        kl = prior_kl(teacher_logits[labeled], outputs["policy"][labeled].float(), support[labeled])
+    else:
+        kl = outputs["policy"].new_zeros(())
+
     total = (
         LOSS_WEIGHTS["policy"] * policy_loss
         + LOSS_WEIGHTS["promo"] * promo_loss
         + LOSS_WEIGHTS["wdl"] * wdl_loss
         + LOSS_WEIGHTS["pv"] * pv_loss
         + LOSS_WEIGHTS["moves_left"] * ml_loss
+        + prior_kl_weight * kl
     )
     return total, {
         "loss": float(total.detach()),
@@ -86,6 +106,7 @@ def compute_loss(outputs: dict[str, torch.Tensor], batch: dict[str, torch.Tensor
         "wdl": float(wdl_loss.detach()),
         "pv": float(pv_loss.detach()),
         "moves_left": float(ml_loss.detach()),
+        "prior_kl": float(kl.detach()),
     }
 
 
@@ -129,7 +150,7 @@ def train(
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
             outputs = train_model(batch["planes"])
-        loss, metrics = compute_loss(outputs, batch)
+        loss, metrics = compute_loss(outputs, batch, prior_kl_weight=cfg.prior_kl_weight)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()

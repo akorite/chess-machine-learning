@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -59,7 +60,21 @@ def reanalyse(
     sample: int = 1000,
     seed: int = 0,
 ) -> list[Record]:
-    """Re-label a sample of replay positions with the latest teacher."""
+    """Re-label a replay sample with the external teacher; a failed label keeps its record."""
+    from ..teacher.lc0_oracle import OracleError
+
     rng = np.random.default_rng(seed)
     indices = rng.choice(len(dataset), size=min(sample, len(dataset)), replace=False)
-    return [label(board_from_record(np.asarray(dataset[int(index)]))) for index in indices]
+    fresh: list[Record] = []
+    skipped = 0
+    for index in indices:
+        record = np.asarray(dataset[int(index)])
+        try:
+            fresh.append(label(board_from_record(record)))
+        except OracleError as exc:
+            skipped += 1
+            print(f"warning: reanalysis skipped: {exc}", file=sys.stderr)
+            fresh.append(record)
+    if skipped:
+        print(f"warning: reanalysis kept {skipped}/{len(indices)} stale labels (oracle faults)", file=sys.stderr)
+    return fresh
