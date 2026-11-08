@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from chessfoundation.budget import (
@@ -6,6 +8,7 @@ from chessfoundation.budget import (
     check_run,
     parse_colab_usage,
     project_cu,
+    read_ledger,
 )
 from chessfoundation.config import BudgetConfig
 
@@ -48,11 +51,49 @@ def test_refuses_run_over_phase_allocation():
         )
 
 
-def test_allows_run_within_every_bound_and_returns_projection():
+def test_allows_run_within_every_bound_and_returns_projection(tmp_path):
     projected = check_run(
-        BudgetConfig(), BudgetState(remaining_cu=200), "L4", hours=6, phase="pretrain"
+        BudgetConfig(),
+        BudgetState(remaining_cu=200),
+        "L4",
+        hours=6,
+        phase="pretrain",
+        ledger_path=tmp_path / "ledger.json",
     )
     assert projected == pytest.approx(11.64)
+
+
+def test_check_run_accumulates_used_cu_across_runs(tmp_path):
+    ledger = tmp_path / "ledger.json"
+    state = BudgetState(remaining_cu=200)
+    check_run(BudgetConfig(), state, "L4", hours=6, phase="pretrain", ledger_path=ledger)
+    check_run(BudgetConfig(), state, "L4", hours=6, phase="pretrain", ledger_path=ledger)
+    saved = json.loads(ledger.read_text())
+    assert saved["used_cu"] == pytest.approx(23.28)
+    assert saved["phases"]["pretrain"] == pytest.approx(23.28)
+    assert saved["remaining_cu"] == pytest.approx(200 - 11.64)
+
+
+def test_ledger_survives_restart_and_loads_prior_spend(tmp_path):
+    ledger = tmp_path / "ledger.json"
+    state = BudgetState(remaining_cu=200)
+    check_run(BudgetConfig(), state, "L4", hours=6, phase="pretrain", ledger_path=ledger)
+    assert read_ledger(ledger)["used_cu"] == pytest.approx(11.64)
+    # a restart reloads the file and accumulates on top
+    check_run(BudgetConfig(), state, "L4", hours=4, phase="data", ledger_path=ledger)
+    saved = read_ledger(ledger)
+    assert saved["used_cu"] == pytest.approx(19.4)
+    assert saved["phases"]["data"] == pytest.approx(7.76)
+
+
+def test_cumulative_spend_refuses_over_ceiling(tmp_path):
+    ledger = tmp_path / "ledger.json"
+    state = BudgetState(remaining_cu=500)
+    for _ in range(3):
+        check_run(BudgetConfig(), state, "L4", hours=20, phase="pretrain", ledger_path=ledger)
+    # 3 x 38.8 = 116.4 logged; a fourth run would take cumulative spend past 150
+    with pytest.raises(BudgetExceeded, match="cumulative"):
+        check_run(BudgetConfig(), state, "L4", hours=20, phase="pretrain", ledger_path=ledger)
 
 
 def test_unknown_phase_fails():

@@ -162,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     print(metrics)
     if args.out:
         save(args.out, model, optimizer, step=start_step + args.steps, meta={"stage": args.stage, "metrics": metrics})
+        Path(args.out).with_suffix(".metrics.json").write_text(json.dumps(metrics, indent=2))
     return 0
 
 

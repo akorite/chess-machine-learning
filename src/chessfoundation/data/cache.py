@@ -82,6 +82,9 @@ def verify(directory: str | Path) -> list[str]:
             errors.append(f"missing shard {name}")
         elif sha256(path) != entry["sha256"]:
             errors.append(f"checksum mismatch {name}")
+    for path in shard_paths(directory):
+        if path.name not in manifest["shards"]:
+            errors.append(f"unlisted shard {path.name}")
     return errors
 
 

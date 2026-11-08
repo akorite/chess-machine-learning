@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import BudgetConfig
 
 CU_PER_HOUR = {"L4": 1.94, "A100": 8.67, "G4": 10.05, "H100": 18.07}
+LEDGER_PATH = Path("budget-ledger.json")
 
 
 class BudgetExceeded(RuntimeError):
@@ -55,8 +58,13 @@ def check_run(
     accel: str,
     hours: float,
     phase: str | None = None,
+    ledger_path: str | Path = LEDGER_PATH,
 ) -> float:
-    """Return the projected CU or raise with the first failing bound."""
+    """Return the projected CU or raise with the first failing bound.
+
+    A passing run appends its spend to the cumulative ledger so per-phase and
+    total spend survive VM loss; a restart reloads the file.
+    """
     projected = project_cu(accel, hours)
     if projected > cfg.ceiling_cu:
         raise BudgetExceeded(
@@ -77,4 +85,30 @@ def check_run(
                 f"projected {projected:.1f} CU exceeds phase {phase!r} allocation "
                 f"of {by_name[phase].cu:.0f} CU"
             )
+    prior = max(float(read_ledger(ledger_path).get("used_cu", 0.0)), state.used_cu)
+    if prior + projected > cfg.ceiling_cu:
+        raise BudgetExceeded(
+            f"cumulative {prior + projected:.1f} CU exceeds the {cfg.ceiling_cu:.0f} CU ceiling "
+            f"({prior:.1f} already spent)"
+        )
+    _write_ledger(Path(ledger_path), prior + projected, phase, projected, state.remaining_cu - projected)
     return projected
+
+
+def read_ledger(path: str | Path) -> dict:
+    """Load the cumulative spend ledger; empty when it does not exist yet."""
+    path = Path(path)
+    if not path.exists():
+        return {"used_cu": 0.0, "phases": {}}
+    return json.loads(path.read_text())
+
+
+def _write_ledger(path: Path, used_cu: float, phase: str | None, projected: float, remaining: float) -> None:
+    ledger = read_ledger(path)
+    phases = dict(ledger.get("phases") or {})
+    if phase is not None:
+        phases[phase] = round(phases.get(phase, 0.0) + projected, 4)
+    ledger["used_cu"] = round(used_cu, 4)
+    ledger["remaining_cu"] = round(remaining, 4)
+    ledger["phases"] = phases
+    path.write_text(json.dumps(ledger, indent=2, sort_keys=True))

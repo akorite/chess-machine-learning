@@ -66,10 +66,36 @@ def best_rung(steps: list[LadderStep]) -> LadderStep | None:
     return beaten[-1] if beaten else None
 
 
+def book_lines(path: str, max_plies: int = 12, max_lines: int = 4096) -> tuple[str, ...]:
+    """Walk a polyglot book into distinct UCI lines, deepest-first up to `max_plies`."""
+    import chess
+    import chess.polyglot
+
+    if not path:
+        return ()
+    lines: list[str] = []
+    with chess.polyglot.open_reader(str(path)) as reader:
+
+        def walk(board: chess.Board, prefix: list[str]) -> None:
+            if len(lines) >= max_lines:
+                return
+            entries = [] if board.ply() >= max_plies else list(reader.find_all(board))
+            if not entries:
+                lines.append(" ".join(prefix))
+                return
+            for entry in sorted(entries, key=lambda e: -e.weight):
+                board.push(entry.move)
+                walk(board, prefix + [entry.move.uci()])
+                board.pop()
+
+        walk(chess.Board(), [])
+    return tuple(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
-    from ..engine.uci import EngineSpec, nodes_options, rung_options, validate_rung
+    from ..engine.uci import EngineSpec, rung_options, validate_rung
     from .report import Row, render
     from .tournament import MatchConfig, run_local
 
@@ -83,10 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default="report.md")
     args = parser.parse_args(argv)
 
+    openings = book_lines(args.book) if args.book else ()
     engine = EngineSpec(args.engine)
 
     def play(rung: Rung, games: int) -> MatchResult:
-        options = nodes_options(rung.nodes) if rung.nodes else rung_options(rung.uci_elo or 2000)
+        # nodes rungs pin via Limit(nodes=N) per game, not a UCI option
+        options = {"Threads": 1, "Hash": 16} if rung.nodes else rung_options(rung.uci_elo or 2000)
         opponent = EngineSpec(args.opponent, options)
         probe = opponent.open()
         try:
@@ -99,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
                 black=opponent,
                 games=games,
                 movetime_ms=args.movetime,
+                openings=openings,
+                nodes=rung.nodes,
                 pgn_path=f"{args.pgn}.{rung.name}.pgn",
             )
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
@@ -10,7 +11,8 @@ import chess
 import numpy as np
 
 from . import chessbench, gigafish, lc0_games, puzzles
-from .cache import clear_shards, verify, write_manifest, write_shard
+from .cache import MANIFEST as MANIFEST_NAME
+from .cache import clear_shards, sha256, verify, write_shard
 from .encode import move_index, record_from_board, record_from_eval, set_best_move
 from .lichess_evals import depth_bands, iter_evals
 
@@ -104,14 +106,25 @@ def build(
     buffer: list[np.ndarray] = []
     total = 0
     shard_index = 0
+    counts = dict(counts or {})
+    entries: dict[str, dict] = {}
 
     def flush() -> None:
         nonlocal shard_index, buffer
         if not buffer:
             return
-        write_shard(out / f"shard-{shard_index:05d}.bin", np.stack(buffer))
+        path = write_shard(out / f"shard-{shard_index:05d}.bin", np.stack(buffer))
+        entries[path.name] = {
+            "sha256": sha256(path),
+            "records": len(buffer),
+        }
         buffer = []
         shard_index += 1
+        # incremental manifest: a mid-build crash leaves a resumable prefix
+        counts["records"] = total
+        (out / MANIFEST_NAME).write_text(
+            json.dumps({"counts": counts, "shards": entries}, indent=2, sort_keys=True)
+        )
 
     for record in records:
         buffer.append(record)
@@ -123,11 +136,7 @@ def build(
     flush()
     if total == 0:
         raise ValueError("no records produced")
-    counts = dict(counts or {})
-    counts["records"] = total
-    result = {"records": total, "shards": shard_index}
-    write_manifest(out, counts)
-    return result
+    return {"records": total, "shards": shard_index}
 
 
 def main(argv: list[str] | None = None) -> int:
