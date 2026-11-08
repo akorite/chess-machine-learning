@@ -276,13 +276,16 @@ def mix_jobs(
     jobs: list[dict] = []
     for name, cap in specs:
         shards = resolve_shards(path_for(name, bare, named), limit_shards)
+        per_shard = 0
         if cap:
             shards = _shards_covering(shards, cap)
+            per_shard = max(1, -(-cap // max(1, len(shards))))
         for index, shard in enumerate(shards):
             jobs.append(
                 {
                     "source": name,
                     "cap": cap,
+                    "max_rows": per_shard,
                     "options": opts,
                     "shard": str(shard),
                     "part": str(
@@ -297,8 +300,9 @@ def convert(job: dict) -> tuple[str, str, int, dict[str, int]]:
     """Worker: convert one source shard into a part file owned by this process only."""
     local: dict[str, int] = {}
     records = source_records(job["source"], job["shard"], job["options"], 0, local)
-    if job["cap"]:
-        records = itertools.islice(records, job["cap"])
+    budget = job["max_rows"] or job["cap"]
+    if budget:
+        records = itertools.islice(records, budget)
     part = Path(job["part"])
     part.parent.mkdir(parents=True, exist_ok=True)
     done = 0
