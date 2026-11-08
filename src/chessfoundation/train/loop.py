@@ -282,8 +282,8 @@ def evaluate(
         model.train()
     return {
         "value_mae": float(np.mean(errors)) if errors else float("nan"),
-        "policy_top1": policy_hits / max(policy_total, 1),
-        "wdl_accuracy": wdl_hits / max(wdl_total, 1),
+        "policy_top1": policy_hits / policy_total if policy_total else float("nan"),
+        "wdl_accuracy": wdl_hits / wdl_total if wdl_total else float("nan"),
     }
 
 
@@ -303,7 +303,8 @@ def train(
         model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
     )
     use_bf16 = torch.device(device).type == "cuda"
-    metrics: dict[str, float] = {}
+    sums: dict[str, dict[str, float]] = {}
+    seen = 0
     started = time.time()
     for offset, prepared in enumerate(
         batches(dataset, cfg.batch_size, cfg.seed, start_step, steps)
@@ -315,10 +316,16 @@ def train(
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=use_bf16):
             outputs = train_model(batch["planes"])
-        loss, metrics = compute_loss(outputs, batch, prior_kl_weight=cfg.prior_kl_weight)
+        loss, step_metrics = compute_loss(outputs, batch, prior_kl_weight=cfg.prior_kl_weight)
+        totals = sums.setdefault("value", {})
+        for key, value in step_metrics.items():
+            totals[key] = totals.get(key, 0.0) + value
+        seen += 1
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)
         optimizer.step()
+    per_batch = sums.get("value", {})
+    metrics = {key: total / max(seen, 1) for key, total in per_batch.items()}
     metrics["steps"] = float(steps)
     metrics["positions_per_second"] = steps * cfg.batch_size / max(time.time() - started, 1e-9)
     return metrics
