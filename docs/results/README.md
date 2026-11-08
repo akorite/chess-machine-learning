@@ -13,5 +13,6 @@ for every match. A run that does not clear L2 is reported as a negative result.
 
 ## Reports
 
+- [2026-11-08 Cycle 3 Run (P6M, 119.6M corpus, Colab L4)](2026-11-08-cycle3-p6m-l4.md)
 - [2026-11-08 Cycle 2 Run (P6M, Colab L4)](2026-11-08-cycle2-p6m-colab-l4.md)
 - [2026-11-07 Cycle 1 Run (P6M, Colab L4)](2026-11-07-p6m-colab-l4.md)
